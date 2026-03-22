@@ -1,4 +1,11 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -14,7 +21,12 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ListFilter, Send } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { History, ListFilter, MessageSquarePlus, Send } from "lucide-react";
 import { cn } from "../lib/utils";
 
 /**
@@ -25,6 +37,8 @@ import { cn } from "../lib/utils";
 /** Hit zone to the right of the 1px line (line sits on chat pane’s right edge). */
 const SPLIT_DIVIDER_PX = 12;
 const SPLIT_MIN_PANE_PX = 280;
+/** Chat pane share of width below the divider (agent feed gets the rest). */
+const DEFAULT_CHAT_FRACTION = 2 / 3;
 
 const AGENT_FEED_FILTER_OPTIONS = [
   { value: "all", label: "All" },
@@ -35,11 +49,12 @@ const AGENT_FEED_FILTER_OPTIONS = [
 
 type AgentFeedFilterValue = (typeof AGENT_FEED_FILTER_OPTIONS)[number]["value"];
 
-/** One row of content; bubble scrolls horizontally so nothing wraps to a second line. */
-const BOARD_CHAT_MARKDOWN_SINGLE_LINE =
-  "!flex w-max max-w-none flex-nowrap items-center gap-x-2 [&>*]:!my-0 [&>*]:shrink-0 [&>*]:whitespace-nowrap [&>ul]:inline-flex [&>ul]:flex-nowrap [&>ul]:gap-x-2 [&>ul]:!m-0 [&>ul]:!py-0 [&>ul]:!pl-0 [&>ol]:inline-flex [&>ol]:flex-nowrap [&>ol]:gap-x-2 [&>ol]:!m-0 [&>ol]:!py-0 [&>ol]:!pl-0 [&_li]:whitespace-nowrap";
+/** Wrapped markdown in bubbles; pre/table scroll horizontally when needed. */
+const BOARD_CHAT_MARKDOWN_CLASS =
+  "max-w-full overflow-visible [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto";
 
-const boardChatBubbleShell = "min-w-0 max-w-[85%] overflow-x-auto overflow-y-hidden px-3 py-2 text-sm";
+const boardChatBubbleShell =
+  "min-w-0 max-w-[85%] break-words px-3 py-2 text-sm overflow-x-auto overflow-y-visible";
 
 export function BoardChat() {
   const { selectedCompanyId, selectedCompany } = useCompany();
@@ -51,9 +66,41 @@ export function BoardChat() {
   }, [setBreadcrumbs]);
 
   const splitContainerRef = useRef<HTMLDivElement>(null);
-  const [leftPaneWidth, setLeftPaneWidth] = useState(480);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [chatPaneFraction, setChatPaneFraction] = useState(DEFAULT_CHAT_FRACTION);
   const splitDragging = useRef(false);
   const [agentFeedFilter, setAgentFeedFilter] = useState<AgentFeedFilterValue>("all");
+
+  useLayoutEffect(() => {
+    const el = splitContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setContainerWidth(el.clientWidth);
+    });
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  const innerWidth = Math.max(0, containerWidth - SPLIT_DIVIDER_PX);
+  const splitLowerPx = SPLIT_MIN_PANE_PX;
+  const splitUpperPx = innerWidth - SPLIT_MIN_PANE_PX;
+  const minChatFraction =
+    innerWidth > 0 ? Math.min(1, SPLIT_MIN_PANE_PX / innerWidth) : 0;
+  const maxChatFraction =
+    innerWidth > 0 ? Math.max(0, 1 - SPLIT_MIN_PANE_PX / innerWidth) : 1;
+  const leftPaneWidth =
+    innerWidth > 0
+      ? splitUpperPx < splitLowerPx
+        ? Math.max(0, Math.round(innerWidth / 2))
+        : Math.round(
+            innerWidth *
+              Math.min(
+                maxChatFraction,
+                Math.max(minChatFraction, chatPaneFraction),
+              ),
+          )
+      : 0;
 
   const handleSplitDragStart = useCallback(
     (e: React.MouseEvent) => {
@@ -64,15 +111,17 @@ export function BoardChat() {
 
       const onMouseMove = (ev: MouseEvent) => {
         if (!splitDragging.current) return;
-        const containerW = splitContainerRef.current?.clientWidth ?? startWidth + 400;
+        const containerW = splitContainerRef.current?.clientWidth ?? containerWidth;
         const inner = containerW - SPLIT_DIVIDER_PX;
         const lower = SPLIT_MIN_PANE_PX;
         const upper = inner - SPLIT_MIN_PANE_PX;
         const next = startWidth + ev.clientX - startX;
+        if (inner <= 0) return;
         if (upper < lower) {
-          setLeftPaneWidth(Math.max(0, Math.round(inner / 2)));
+          setChatPaneFraction(0.5);
         } else {
-          setLeftPaneWidth(Math.min(upper, Math.max(lower, next)));
+          const clamped = Math.min(upper, Math.max(lower, next));
+          setChatPaneFraction(clamped / inner);
         }
       };
 
@@ -85,7 +134,7 @@ export function BoardChat() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [leftPaneWidth],
+    [containerWidth, leftPaneWidth],
   );
 
   const [input, setInput] = useState("");
@@ -315,22 +364,57 @@ export function BoardChat() {
         ref={splitContainerRef}
         className="flex min-h-0 min-w-0 flex-1 flex-row"
       >
-        {/* Left: chat (self-contained pane) */}
+        {/* Left: chat (self-contained pane) — 2/3 default until container is measured for drag math */}
         <div
-          className="flex min-h-0 min-w-0 shrink-0 flex-col bg-background"
-          style={{ width: leftPaneWidth }}
+          className={cn(
+            "flex min-h-0 min-w-0 shrink-0 flex-col bg-background",
+            innerWidth <= 0 && "w-2/3",
+          )}
+          style={innerWidth > 0 ? { width: leftPaneWidth } : undefined}
         >
-          <div className="relative shrink-0 px-4 py-3">
+          <div className="relative flex shrink-0 items-center justify-between gap-2 px-4 py-3">
             <div
               className="pointer-events-none absolute bottom-0 left-0 right-0 h-px bg-border"
               aria-hidden
             />
-            <h3 className="text-sm font-semibold">
-              {ceoAgent?.name ?? "Board Room"}
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              {selectedCompany?.name ?? "Your company"}
-            </p>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold">
+                {ceoAgent?.name ?? "Board Room"}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {selectedCompany?.name ?? "Your company"}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label="chat history"
+                  >
+                    <History className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">chat history</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label="new chat"
+                  >
+                    <MessageSquarePlus className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">new chat</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
           {/* Messages — scroll viewport flush right so the scrollbar sits on the pane/divider edge */}
           <div className="scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -374,7 +458,7 @@ export function BoardChat() {
                           : "bg-muted text-foreground [border-radius:12px_12px_12px_0px]",
                       )}
                     >
-                      <MarkdownBody className={BOARD_CHAT_MARKDOWN_SINGLE_LINE}>
+                      <MarkdownBody className={BOARD_CHAT_MARKDOWN_CLASS}>
                         {comment.body ?? ""}
                       </MarkdownBody>
                     </div>
@@ -388,7 +472,7 @@ export function BoardChat() {
                   <div
                     className={cn(
                       boardChatBubbleShell,
-                      "whitespace-nowrap bg-blue-600 text-white [border-radius:12px_12px_0px_12px]",
+                      "bg-blue-600 text-white [border-radius:12px_12px_0px_12px]",
                     )}
                   >
                     {optimisticMessage}
@@ -405,7 +489,7 @@ export function BoardChat() {
                       "bg-muted text-foreground [border-radius:12px_12px_12px_0px]",
                     )}
                   >
-                    <MarkdownBody className={BOARD_CHAT_MARKDOWN_SINGLE_LINE}>{streamingText}</MarkdownBody>
+                    <MarkdownBody className={BOARD_CHAT_MARKDOWN_CLASS}>{streamingText}</MarkdownBody>
                   </div>
                 </div>
               )}
@@ -483,17 +567,22 @@ export function BoardChat() {
               </p>
             </div>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground"
-                  aria-label="Filter agent feed"
-                >
-                  <ListFilter />
-                </Button>
-              </DropdownMenuTrigger>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="shrink-0 text-muted-foreground"
+                      aria-label="filter by"
+                    >
+                      <ListFilter />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">filter by</TooltipContent>
+              </Tooltip>
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuRadioGroup
                   value={agentFeedFilter}
