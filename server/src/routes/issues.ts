@@ -647,6 +647,18 @@ function isExplicitResumeCapableStatus(status: string | null | undefined) {
   return status === "done" || status === "blocked" || status === "todo" || status === "in_progress";
 }
 
+function resolveInteractionWakeReason(input: {
+  interaction: { status: string; kind: string; rejectionReason?: string | null };
+  source: string;
+}) {
+  // Use specific wake reasons for rejected interactions so agents can distinguish
+  // rejections from other interaction resolutions (accept, respond, cancel).
+  if (input.interaction.status === "rejected") {
+    return "interaction_rejected";
+  }
+  return "issue_commented";
+}
+
 function queueResolvedInteractionContinuationWakeup(input: {
   heartbeat: ReturnType<typeof heartbeatService>;
   issue: { id: string; assigneeAgentId: string | null; status: string };
@@ -677,10 +689,11 @@ function queueResolvedInteractionContinuationWakeup(input: {
 
   const forceFreshSession = input.forceFreshSession === true;
   const workspaceRefreshReason = readNonEmptyString(input.workspaceRefreshReason);
+  const wakeReason = resolveInteractionWakeReason({ interaction: input.interaction, source: input.source });
   void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
     source: "automation",
     triggerDetail: "system",
-    reason: "issue_commented",
+    reason: wakeReason,
     payload: {
       issueId: input.issue.id,
       interactionId: input.interaction.id,
@@ -702,7 +715,7 @@ function queueResolvedInteractionContinuationWakeup(input: {
       sourceCommentId: input.interaction.sourceCommentId ?? null,
       sourceRunId: input.interaction.sourceRunId ?? null,
       interactionRejectionReason: input.interaction.rejectionReason ?? null,
-      wakeReason: "issue_commented",
+      wakeReason,
       source: input.source,
       ...(forceFreshSession ? { forceFreshSession: true } : {}),
       ...(workspaceRefreshReason ? { workspaceRefreshReason } : {}),
