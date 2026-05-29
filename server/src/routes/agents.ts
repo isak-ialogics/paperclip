@@ -527,8 +527,15 @@ export function agentRoutes(
       buildAgentAccessState(agent),
     ]);
 
+    const safeAgent = options?.restricted
+      ? redactForRestrictedAgentView(agent)
+      : {
+          ...agent,
+          adapterConfig: stripDevicePrivateKey(agent.adapterConfig as Record<string, unknown> | null),
+        };
+
     return {
-      ...(options?.restricted ? redactForRestrictedAgentView(agent) : agent),
+      ...safeAgent,
       chainOfCommand,
       access: accessState,
     };
@@ -1264,6 +1271,13 @@ export function agentRoutes(
       desiredSkills,
       runtimeSkillEntries,
     };
+  }
+
+  function stripDevicePrivateKey(config: Record<string, unknown> | null): Record<string, unknown> | null {
+    if (!config) return config;
+    if (!("devicePrivateKeyPem" in config)) return config;
+    const { devicePrivateKeyPem: _omit, ...rest } = config;
+    return rest;
   }
 
   function redactForRestrictedAgentView(agent: Awaited<ReturnType<typeof svc.getById>>) {
