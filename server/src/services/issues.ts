@@ -4990,6 +4990,7 @@ export function issueService(db: Db) {
           executionRunId: null,
           executionAgentNameKey: null,
           executionLockedAt: null,
+          executionState: null,
           updatedAt: new Date(),
         })
         .where(eq(issues.id, id))
