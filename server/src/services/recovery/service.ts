@@ -22,6 +22,8 @@ import {
   issueRelations,
   issueThreadInteractions,
   issues,
+  routines,
+  routineTriggers,
 } from "@paperclipai/db";
 import { parseObject, asBoolean, asNumber } from "../../adapters/utils.js";
 import { runningProcesses } from "../../adapters/index.js";
@@ -2377,6 +2379,28 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       }
 
       if (await hasActiveExecutionPath(issue.companyId, issue.id)) {
+        result.skipped += 1;
+        continue;
+      }
+
+      // GH#7028: exempt issues that are the parent of an active routine with
+      // an enabled cron trigger.  Long-lived lifecycle issues only continued by
+      // scheduled routine fires appear "orphaned" between fires.  Manual/webhook
+      // triggers don't auto-re-fire, so those issues are NOT exempt.
+      const activeRoutineRows = await db
+        .select({ id: routines.id })
+        .from(routines)
+        .innerJoin(routineTriggers, eq(routines.id, routineTriggers.routineId))
+        .where(
+          and(
+            eq(routines.parentIssueId, issue.id),
+            eq(routines.status, "active"),
+            eq(routineTriggers.enabled, true),
+            not(isNull(routineTriggers.cronExpression)),
+          ),
+        )
+        .limit(1);
+      if (activeRoutineRows.length > 0) {
         result.skipped += 1;
         continue;
       }
