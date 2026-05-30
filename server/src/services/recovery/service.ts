@@ -103,6 +103,7 @@ type LatestIssueRun = Pick<
 type SuccessfulLatestIssueRun = NonNullable<LatestIssueRun> & { status: "succeeded" };
 
 type StrandedRecoveryCause = "stranded_assigned_issue" | typeof SUCCESSFUL_RUN_MISSING_STATE_REASON;
+type StrandedAssignedPreviousStatus = "todo" | "in_progress" | "blocked";
 
 type SuccessfulRunHandoffRecoveryEvidence = {
   sourceRunId: string | null;
@@ -1894,9 +1895,12 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     return cto?.id ?? null;
   }
 
-  async function resolveStrandedIssueRecoveryOwnerAgentId(issue: typeof issues.$inferSelect) {
-    const childCoveredHub = await isChildCoveredProgramHub(issue);
-    if (childCoveredHub) {
+  async function resolveStrandedIssueRecoveryOwnerAgentId(
+    issue: typeof issues.$inferSelect,
+    childCoveredHub?: boolean,
+  ) {
+    const isChildCovered = childCoveredHub ?? await isChildCoveredProgramHub(issue);
+    if (isChildCovered) {
       return resolveChildCoveredHubMonitorOwnerAgentId(issue);
     }
 
@@ -2114,7 +2118,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   function buildStrandedRecoveryActionEvidence(input: {
     issue: typeof issues.$inferSelect;
     latestRun: LatestIssueRun;
-    previousStatus: "todo" | "in_progress";
+    previousStatus: StrandedAssignedPreviousStatus;
     recoveryCause: StrandedRecoveryCause;
     successfulRunHandoffEvidence?: SuccessfulRunHandoffRecoveryEvidence | null;
   }) {
@@ -2140,16 +2144,17 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   async function ensureSourceScopedStrandedRecoveryAction(input: {
     issue: typeof issues.$inferSelect;
     latestRun: LatestIssueRun;
-    previousStatus: "todo" | "in_progress";
+    previousStatus: StrandedAssignedPreviousStatus;
     recoveryCause?: StrandedRecoveryCause;
     successfulRunHandoffEvidence?: SuccessfulRunHandoffRecoveryEvidence | null;
+    childCoveredHub?: boolean;
   }) {
     const recoveryCause = input.recoveryCause ?? "stranded_assigned_issue";
-    const childCoveredHub = await isChildCoveredProgramHub(input.issue);
+    const childCoveredHub = input.childCoveredHub ?? await isChildCoveredProgramHub(input.issue);
     const hubMonitorOwnerAgentId = childCoveredHub
       ? await resolveChildCoveredHubMonitorOwnerAgentId(input.issue)
       : null;
-    const ownerAgentId = await resolveStrandedIssueRecoveryOwnerAgentId(input.issue);
+    const ownerAgentId = await resolveStrandedIssueRecoveryOwnerAgentId(input.issue, childCoveredHub);
     const now = new Date();
     const action = await recoveryActionsSvc.upsertSourceScoped({
       companyId: input.issue.companyId,
@@ -2337,7 +2342,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
   async function escalateStrandedAssignedIssue(input: {
     issue: typeof issues.$inferSelect;
-    previousStatus: "todo" | "in_progress";
+    previousStatus: StrandedAssignedPreviousStatus;
     latestRun: LatestIssueRun;
     comment?: string;
     recoveryCause?: StrandedRecoveryCause;
@@ -2352,15 +2357,16 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     }
 
     const recoveryCause = input.recoveryCause ?? "stranded_assigned_issue";
+    const childCoveredHub = await isChildCoveredProgramHub(input.issue);
     const recoveryAction = await ensureSourceScopedStrandedRecoveryAction({
       issue: input.issue,
       previousStatus: input.previousStatus,
       latestRun: input.latestRun,
       recoveryCause,
       successfulRunHandoffEvidence: input.successfulRunHandoffEvidence,
+      childCoveredHub,
     });
     const blockerIds = await existingUnresolvedBlockerIssueIds(input.issue.companyId, input.issue.id);
-    const childCoveredHub = await isChildCoveredProgramHub(input.issue);
     const preserveHubMonitorDisposition = childCoveredHub && blockerIds.length === 0;
     const hubOwnerAgentId =
       (childCoveredHub ? await resolveChildCoveredHubMonitorOwnerAgentId(input.issue) : null) ??
