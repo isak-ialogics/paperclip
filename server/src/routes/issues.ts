@@ -1768,6 +1768,10 @@ export function issueRoutes(
     if (!resolved.agent) {
       throw notFound("Agent not found");
     }
+    // Block assignment to frozen agents
+    if (resolved.agent.status === "paused" && resolved.agent.pauseReason === "freeze") {
+      throw conflict("Cannot assign issue to frozen agent");
+    }
     return resolved.agent.id;
   }
   function toValidTimestamp(value: Date | string | null | undefined) {

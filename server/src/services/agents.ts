@@ -435,7 +435,7 @@ export function agentService(db: Db) {
 
     update: updateAgent,
 
-    pause: async (id: string, reason: "manual" | "budget" | "system" = "manual") => {
+    pause: async (id: string, reason: "manual" | "budget" | "system" | "freeze" = "manual") => {
       const existing = await getById(id);
       if (!existing) return null;
       if (existing.status === "terminated") throw conflict("Cannot pause terminated agent");
@@ -446,6 +446,60 @@ export function agentService(db: Db) {
           status: "paused",
           pauseReason: reason,
           pausedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, id))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      return updated ? normalizeAgentRow(updated) : null;
+    },
+
+    freeze: async (id: string) => {
+      const existing = await getById(id);
+      if (!existing) return null;
+      if (existing.status === "terminated") throw conflict("Cannot freeze terminated agent");
+      if (existing.pauseReason === "freeze") throw conflict("Agent is already frozen");
+
+      // Store preFreezeStatus in metadata
+      const currentMetadata = existing.metadata ?? {};
+      const updatedMetadata = {
+        ...currentMetadata,
+        preFreezeStatus: existing.status,
+      };
+
+      const updated = await db
+        .update(agents)
+        .set({
+          status: "paused",
+          pauseReason: "freeze",
+          pausedAt: new Date(),
+          metadata: updatedMetadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, id))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      return updated ? normalizeAgentRow(updated) : null;
+    },
+
+    unfreeze: async (id: string) => {
+      const existing = await getById(id);
+      if (!existing) return null;
+      if (existing.status === "terminated") throw conflict("Cannot unfreeze terminated agent");
+      if (existing.pauseReason !== "freeze") throw conflict("Agent is not frozen");
+
+      // Restore preFreezeStatus from metadata, default to "idle" if not found
+      const preFreezeStatus = (existing.metadata as Record<string, unknown>)?.preFreezeStatus ?? "idle";
+      const currentMetadata = { ...(existing.metadata ?? {}) };
+      delete currentMetadata.preFreezeStatus;
+
+      const updated = await db
+        .update(agents)
+        .set({
+          status: preFreezeStatus,
+          pauseReason: null,
+          pausedAt: null,
+          metadata: Object.keys(currentMetadata).length > 0 ? currentMetadata : null,
           updatedAt: new Date(),
         })
         .where(eq(agents.id, id))
