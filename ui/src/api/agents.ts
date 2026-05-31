@@ -170,6 +170,8 @@ export const agentsApi = {
     api.get<AgentSkillSnapshot>(agentPath(id, companyId, "/skills")),
   syncSkills: (id: string, desiredSkills: string[], companyId?: string) =>
     api.post<AgentSkillSnapshot>(agentPath(id, companyId, "/skills/sync"), { desiredSkills }),
+  hermesStatus: (id: string, companyId?: string) =>
+    api.get<HermesStatus>(agentPath(id, companyId, "/hermes-status")),
   createKey: (id: string, name: string, companyId?: string) =>
     api.post<AgentKeyCreated>(agentPath(id, companyId, "/keys"), { name }),
   revokeKey: (agentId: string, keyId: string, companyId?: string) =>
@@ -230,4 +232,29 @@ export interface AvailableSkill {
   name: string;
   description: string;
   isPaperclipManaged: boolean;
+}
+
+export interface HermesStatusSkillEntry {
+  key: string;
+  runtimeName: string | null;
+  state: string;
+  sourcePath: string | null;
+  detail: string | null;
+  required: boolean;
+}
+
+export interface HermesStatus {
+  hermesVersion: string | null;
+  profileName: string;
+  skills: {
+    supported: boolean;
+    mode: string;
+    entries: HermesStatusSkillEntry[];
+    warningCount: number;
+  } | null;
+  agentsMd: {
+    found: boolean;
+    path: string;
+    firstLine: string;
+  };
 }

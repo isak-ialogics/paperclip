@@ -6,6 +6,7 @@ import {
   type AgentKey,
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
+  type HermesStatus,
 } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
 import { budgetsApi } from "../api/budgets";
@@ -724,6 +725,12 @@ export function AgentDetail() {
     enabled: Boolean(resolvedAgentId) && needsDashboardData,
   });
 
+  const { data: hermesStatus } = useQuery<HermesStatus | null>({
+    queryKey: queryKeys.agents.hermesStatus(resolvedAgentId ?? routeAgentRef),
+    queryFn: () => agentsApi.hermesStatus(resolvedAgentId!, resolvedCompanyId ?? undefined).catch(() => null),
+    enabled: Boolean(resolvedAgentId) && needsDashboardData && agent?.adapterType === "hermes_local",
+  });
+
   const { data: heartbeats } = useQuery({
     queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
@@ -1264,6 +1271,7 @@ export function AgentDetail() {
           runs={heartbeats ?? []}
           assignedIssues={assignedIssues}
           runtimeState={runtimeState}
+          hermesStatus={hermesStatus}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
         />
@@ -1431,6 +1439,7 @@ function AgentOverview({
   runs,
   assignedIssues,
   runtimeState,
+  hermesStatus,
   agentId,
   agentRouteId,
 }: {
@@ -1438,6 +1447,7 @@ function AgentOverview({
   runs: HeartbeatRun[];
   assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   runtimeState?: AgentRuntimeState;
+  hermesStatus?: HermesStatus | null;
   agentId: string;
   agentRouteId: string;
 }) {
@@ -1500,6 +1510,85 @@ function AgentOverview({
         <h3 className="text-sm font-medium">Costs</h3>
         <CostsSection runtimeState={runtimeState} runs={runs} />
       </div>
+
+      {/* Hermes Runtime (hermes_local agents only) */}
+      {hermesStatus && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-medium">Hermes Runtime</h3>
+          <div className="border border-border rounded-lg p-4 space-y-4">
+            {/* Version */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Hermes CLI Version</span>
+              <span className="font-mono text-xs text-foreground">
+                {hermesStatus.hermesVersion ?? <span className="text-muted-foreground italic">unknown</span>}
+              </span>
+            </div>
+
+            {/* Profile */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Profile</span>
+              <span className="font-mono text-xs text-foreground">{hermesStatus.profileName ?? "default"}</span>
+            </div>
+
+            {/* AGENTS.md */}
+            <div className="flex items-start justify-between gap-4">
+              <span className="text-xs text-muted-foreground shrink-0">AGENTS.md</span>
+              <div className="text-right">
+                {hermesStatus.agentsMd.found ? (
+                  <div className="space-y-0.5">
+                    <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Found at {hermesStatus.agentsMd.path}
+                    </span>
+                    {hermesStatus.agentsMd.firstLine && (
+                      <span className="block text-xs text-muted-foreground truncate max-w-xs font-mono">
+                        {hermesStatus.agentsMd.firstLine}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">Not found</span>
+                )}
+              </div>
+            </div>
+
+            {/* Skills */}
+            {hermesStatus.skills && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Loaded Skills</span>
+                  <span className="text-xs text-muted-foreground">
+                    {hermesStatus.skills.entries.length} skill{hermesStatus.skills.entries.length !== 1 ? "s" : ""}
+                    {hermesStatus.skills.warningCount > 0 && ` (${hermesStatus.skills.warningCount} warning${hermesStatus.skills.warningCount !== 1 ? "s" : ""})`}
+                  </span>
+                </div>
+                {hermesStatus.skills.entries.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No skills loaded</p>
+                ) : (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {hermesStatus.skills.entries.map((skill) => (
+                      <div key={skill.key} className="flex items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-medium truncate">{skill.runtimeName || skill.key}</span>
+                          {skill.required && (
+                            <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">required</span>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-muted-foreground truncate max-w-[200px] text-right">
+                          {skill.sourcePath ? skill.sourcePath.split("/").slice(-2).join("/") : "—"}
+                        </span>
+                        {skill.state === "error" && (
+                          <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

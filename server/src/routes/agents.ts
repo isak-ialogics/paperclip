@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { access as fsAccess, constants } from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
@@ -1499,6 +1501,113 @@ export function agentRoutes(
       config: runtimeSkillConfig,
     });
     res.json(snapshot);
+  });
+
+  /**
+   * GET /agents/:id/hermes-status
+   * Returns hermes-specific runtime status: CLI version, loaded skills, AGENTS.md presence.
+   * Only available for hermes_local agents.
+   */
+  router.get("/agents/:id/hermes-status", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanReadConfigurations(req, agent.companyId);
+
+    if (agent.adapterType !== "hermes_local") {
+      res.status(400).json({ error: "Hermes status is only available for hermes_local agents" });
+      return;
+    }
+
+    // 1. Get CLI version
+    let hermesVersion: string | null = null;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile("hermes", ["--version"], { timeout: 5000 }, (err, stdout) => {
+          if (err) { resolve(); return; }
+          const line = stdout.trim().split("\n")[0];
+          if (line) hermesVersion = line;
+          resolve();
+        });
+      });
+    } catch {
+      // hermes not on PATH — version stays null
+    }
+
+    // 2. Get skills list via adapter
+    let skillsSnapshot: AgentSkillSnapshot | null = null;
+    try {
+      const adapter = findActiveServerAdapter(agent.adapterType);
+      if (adapter?.listSkills) {
+        const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
+          agent.companyId,
+          agent.adapterConfig,
+        );
+        const runtimeSkillConfig = await buildRuntimeSkillConfig(
+          agent.companyId,
+          agent.adapterType,
+          runtimeConfig,
+          { materializeMissing: false },
+        );
+        skillsSnapshot = await adapter.listSkills({
+          agentId: agent.id,
+          companyId: agent.companyId,
+          adapterType: agent.adapterType,
+          config: runtimeSkillConfig,
+        });
+      }
+    } catch {
+      // If skills lookup fails, skillsSnapshot stays null
+    }
+
+    // 3. Check AGENTS.md in agent CWD (from instructions bundle rootPath)
+    const agentsMdStatus = {
+      found: false as boolean,
+      path: "" as string,
+      firstLine: "" as string,
+    };
+    try {
+      const bundle = await agentInstructionsService().getBundle(agent);
+      if (bundle?.rootPath) {
+        const agentsMdPath = path.join(bundle.rootPath, "AGENTS.md");
+        await fsAccess(agentsMdPath, constants.F_OK);
+        agentsMdStatus.found = true;
+        agentsMdStatus.path = agentsMdPath;
+        // Read first line
+        const { execFileSync } = await import("node:child_process");
+        const firstLine = execFileSync("head", ["-n1", agentsMdPath], { encoding: "utf8", timeout: 2000 }).trim();
+        agentsMdStatus.firstLine = firstLine;
+      }
+    } catch {
+      // AGENTS.md not found or not readable — status stays as-is
+    }
+
+    // 4. Get the profile name from adapter config
+    const profileName = (agent.adapterConfig as Record<string, unknown>)?.profile as string | null;
+
+    res.json({
+      hermesVersion,
+      profileName: profileName ?? "default",
+      skills: skillsSnapshot
+        ? {
+            supported: skillsSnapshot.supported,
+            mode: skillsSnapshot.mode,
+            entries: skillsSnapshot.entries.map((e) => ({
+              key: e.key,
+              runtimeName: e.runtimeName,
+              state: e.state,
+              sourcePath: e.sourcePath,
+              detail: e.detail,
+              required: e.required,
+            })),
+            warningCount: skillsSnapshot.warnings.length,
+          }
+        : null,
+      agentsMd: agentsMdStatus,
+    });
   });
 
   router.post(
