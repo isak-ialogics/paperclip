@@ -7,6 +7,7 @@ import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import { readPersistedDevServerStatus, toDevServerHealthStatus, writeDevServerRestartRequest } from "../dev-server-status.js";
 import { logger } from "../middleware/logger.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
+import { getDiskStatus } from "../services/disk-check.js";
 import { serverVersion } from "../version.js";
 
 function shouldExposeFullHealthDetails(
@@ -154,17 +155,23 @@ export function healthRoutes(
     }
 
     if (!exposeFullDetails) {
+      const disk = getDiskStatus();
       res.json({
         status: "ok",
         deploymentMode: opts.deploymentMode,
         deploymentExposure: opts.deploymentExposure,
         bootstrapStatus,
         bootstrapInviteActive,
+        disk: {
+          percentUsed: disk.percentUsed,
+          thresholdState: disk.thresholdState,
+        },
         ...(devServer ? { devServer } : {}),
       });
       return;
     }
 
+    const disk = getDiskStatus();
     res.json({
       status: "ok",
       version: serverVersion,
@@ -175,6 +182,13 @@ export function healthRoutes(
       bootstrapInviteActive,
       features: {
         companyDeletionEnabled: opts.companyDeletionEnabled,
+      },
+      disk: {
+        total: disk.total,
+        used: disk.used,
+        available: disk.available,
+        percentUsed: disk.percentUsed,
+        thresholdState: disk.thresholdState,
       },
       ...(devServer ? { devServer } : {}),
     });

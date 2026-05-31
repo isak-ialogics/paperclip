@@ -94,12 +94,16 @@ describe("GET /health", () => {
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       status: "ok",
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
+      disk: {
+        percentUsed: expect.any(Number),
+        thresholdState: expect.any(String),
+      },
     });
   });
 
@@ -129,12 +133,16 @@ describe("GET /health", () => {
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       status: "ok",
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
+      disk: {
+        percentUsed: expect.any(Number),
+        thresholdState: expect.any(String),
+      },
     });
   });
 
@@ -179,6 +187,65 @@ describe("GET /health", () => {
       features: {
         companyDeletionEnabled: false,
       },
+      disk: {
+        percentUsed: expect.any(Number),
+        thresholdState: expect.any(String),
+      },
     });
+  });
+
+  it("includes disk status in minimal response", async () => {
+    const { healthRoutes } = await import("../routes/health.js");
+    const db = {
+      execute: vi.fn().mockResolvedValue([{ "?column?": 1 }]),
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([{ count: 1 }]),
+        })),
+      })),
+    } as unknown as Db;
+    const app = express();
+    app.use("/health", healthRoutes(db));
+
+    const res = await request(app).get("/health");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      status: "ok",
+      disk: {
+        percentUsed: expect.any(Number),
+        thresholdState: expect.any(String),
+      },
+    });
+  });
+
+  it("includes full disk details in detailed response", async () => {
+    const { healthRoutes } = await import("../routes/health.js");
+    const db = {
+      execute: vi.fn().mockResolvedValue([{ "?column?": 1 }]),
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([{ count: 1 }]),
+        })),
+      })),
+    } as unknown as Db;
+    const app = express();
+    app.use((req, _res, next) => {
+      (req as any).actor = { type: "board", userId: "user-1", source: "session" };
+      next();
+    });
+    app.use("/health", healthRoutes(db));
+
+    const res = await request(app).get("/health");
+
+    expect(res.status).toBe(200);
+    expect(res.body.disk).toMatchObject({
+      total: expect.any(Number),
+      used: expect.any(Number),
+      available: expect.any(Number),
+      percentUsed: expect.any(Number),
+      thresholdState: expect.any(String),
+    });
+    expect(res.body.disk.total).toBeGreaterThan(0);
   });
 });

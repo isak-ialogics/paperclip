@@ -173,6 +173,7 @@ import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import { isUnsafeSessionWorkspaceCwd } from "./session-workspace-cwd.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
+import { isDiskCritical } from "./disk-check.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_PERSISTED_LOG_CHUNK_CHARS = 64 * 1024;
@@ -9087,6 +9088,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       throw conflict(budgetBlock.reason, {
         scopeType: budgetBlock.scopeType,
         scopeId: budgetBlock.scopeId,
+      });
+    }
+
+    // Refuse new dispatches when disk is at critical usage (>95%) to prevent
+    // Postgres from going offline due to disk pressure.  Already-running work
+    // and human/API access are preserved.
+    if (isDiskCritical()) {
+      await writeSkippedRequest("disk.critical");
+      throw conflict("disk_usage_critical", {
+        threshold: "critical",
+        message: "Disk usage is above 95%. New heartbeat dispatches are paused until disk space is freed.",
       });
     }
 
