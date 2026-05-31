@@ -1,0 +1,1 @@
+CREATE INDEX "issues_company_status_updated_at_idx" ON "issues" USING btree ("company_id","status","updated_at" desc);

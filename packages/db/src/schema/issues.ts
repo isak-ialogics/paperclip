@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   pgTable,
@@ -70,6 +70,8 @@ export const issues = pgTable(
   },
   (table) => ({
     companyStatusIdx: index("issues_company_status_idx").on(table.companyId, table.status),
+    companyStatusUpdatedAtIdx: index("issues_company_status_updated_at_idx")
+      .on(table.companyId, table.status, desc(table.updatedAt)),
     assigneeStatusIdx: index("issues_company_assignee_status_idx").on(
       table.companyId,
       table.assigneeAgentId,
