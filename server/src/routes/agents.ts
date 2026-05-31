@@ -73,7 +73,7 @@ import {
   refreshAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
-import { redactEventPayload } from "../redaction.js";
+import { redactEventPayload, REDACTED_EVENT_VALUE } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -1273,6 +1273,27 @@ export function agentRoutes(
     };
   }
 
+  function redactPlainEnvBindings(payload: Record<string, unknown> | null): Record<string, unknown> | null {
+    if (!payload) return null;
+    const redacted: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(payload)) {
+      if (Array.isArray(value)) {
+        redacted[key] = value.map((item) =>
+          typeof item === "object" && item !== null && "type" in item && (item as Record<string, unknown>).type === "plain"
+            ? { type: "plain", value: REDACTED_EVENT_VALUE }
+            : item,
+        );
+        continue;
+      }
+      if (typeof value === "object" && value !== null && "type" in value && (value as Record<string, unknown>).type === "plain") {
+        redacted[key] = { type: "plain", value: REDACTED_EVENT_VALUE };
+        continue;
+      }
+      redacted[key] = value;
+    }
+    return redacted;
+  }
+
   function redactAgentConfiguration(agent: Awaited<ReturnType<typeof svc.getById>>) {
     if (!agent) return null;
     return {
@@ -1804,7 +1825,19 @@ export function agentRoutes(
       res.json(await buildAgentDetail(agent, { restricted: true }));
       return;
     }
-    res.json(await buildAgentDetail(agent));
+    const redact = req.query.redact === "true";
+    const detail = await buildAgentDetail(agent);
+    if (redact) {
+      detail.adapterConfig = redactPlainEnvBindings(
+        redactEventPayload(detail.adapterConfig as Record<string, unknown> | null)
+      ) as typeof detail.adapterConfig;
+      if (detail.runtimeConfig) {
+        detail.runtimeConfig = redactEventPayload(
+          detail.runtimeConfig as Record<string, unknown>
+        ) as typeof detail.runtimeConfig;
+      }
+    }
+    res.json(detail);
   });
 
   router.get("/agents/:id/configuration", async (req, res) => {
