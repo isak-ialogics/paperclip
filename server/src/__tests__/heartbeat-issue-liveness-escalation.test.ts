@@ -756,6 +756,7 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
     ].join(":");
     const closedEscalationId = randomUUID();
 
+    const closedAt = new Date(Date.now() - 48 * 60 * 60 * 1000);
     await db.insert(issues).values({
       id: closedEscalationId,
       companyId,
@@ -768,6 +769,8 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
       identifier: "CLOSED-3",
       originKind: "harness_liveness_escalation",
       originId: incidentKey,
+      completedAt: closedAt,
+      updatedAt: closedAt,
     });
 
     const result = await heartbeat.reconcileIssueGraphLiveness();
