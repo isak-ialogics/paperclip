@@ -788,7 +788,7 @@ const heartbeatRunListColumns = {
   wakeupRequestId: heartbeatRuns.wakeupRequestId,
   exitCode: heartbeatRuns.exitCode,
   signal: heartbeatRuns.signal,
-  usageJson: heartbeatRuns.usageJson,
+  // usageJson excluded from list queries — only fetched in detail endpoint
   sessionIdBefore: heartbeatRuns.sessionIdBefore,
   sessionIdAfter: heartbeatRuns.sessionIdAfter,
   logStore: heartbeatRuns.logStore,
@@ -822,24 +822,32 @@ const heartbeatRunListColumns = {
 } as const;
 
 const heartbeatRunListContextColumns = {
-  contextIssueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`.as("contextIssueId"),
-  contextTaskId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'taskId'`.as("contextTaskId"),
-  contextTaskKey: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'taskKey'`.as("contextTaskKey"),
-  contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
-  contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
-  contextWakeReason: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeReason'`.as("contextWakeReason"),
-  contextWakeSource: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeSource'`.as("contextWakeSource"),
-  contextWakeTriggerDetail: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeTriggerDetail'`.as("contextWakeTriggerDetail"),
+  contextSnapshot: sql<Record<string, unknown> | null>`
+    jsonb_build_object(
+      'issueId', ${heartbeatRuns.contextSnapshot} ->> 'issueId',
+      'taskId', ${heartbeatRuns.contextSnapshot} ->> 'taskId',
+      'taskKey', ${heartbeatRuns.contextSnapshot} ->> 'taskKey',
+      'commentId', ${heartbeatRuns.contextSnapshot} ->> 'commentId',
+      'wakeCommentId', ${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId',
+      'wakeReason', ${heartbeatRuns.contextSnapshot} ->> 'wakeReason',
+      'wakeSource', ${heartbeatRuns.contextSnapshot} ->> 'wakeSource',
+      'wakeTriggerDetail', ${heartbeatRuns.contextSnapshot} ->> 'wakeTriggerDetail'
+    )
+  `.as("contextSnapshot"),
 } as const;
 
 const heartbeatRunListResultColumns = {
-  resultSummary: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'summary', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultSummary"),
-  resultResult: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'result', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultResult"),
-  resultMessage: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'message', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultMessage"),
-  resultError: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'error', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultError"),
-  resultTotalCostUsd: sql<string | null>`${heartbeatRuns.resultJson} ->> 'total_cost_usd'`.as("resultTotalCostUsd"),
-  resultCostUsd: sql<string | null>`${heartbeatRuns.resultJson} ->> 'cost_usd'`.as("resultCostUsd"),
-  resultCostUsdCamel: sql<string | null>`${heartbeatRuns.resultJson} ->> 'costUsd'`.as("resultCostUsdCamel"),
+  resultJson: sql<Record<string, unknown> | null>`
+    jsonb_build_object(
+      'summary', left(${heartbeatRuns.resultJson} ->> 'summary', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+      'result', left(${heartbeatRuns.resultJson} ->> 'result', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+      'message', left(${heartbeatRuns.resultJson} ->> 'message', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+      'error', left(${heartbeatRuns.resultJson} ->> 'error', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+      'total_cost_usd', ${heartbeatRuns.resultJson} ->> 'total_cost_usd',
+      'cost_usd', ${heartbeatRuns.resultJson} ->> 'cost_usd',
+      'costUsd', ${heartbeatRuns.resultJson} ->> 'costUsd'
+    )
+  `.as("resultJson"),
 } as const;
 
 const heartbeatRunSafeResultJsonColumn = sql<Record<string, unknown> | null>`
@@ -3494,7 +3502,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         createdAt: heartbeatRuns.createdAt,
         usageJson: heartbeatRuns.usageJson,
         error: heartbeatRuns.error,
-        ...heartbeatRunListResultColumns,
+        resultJson: sql<Record<string, unknown> | null>`
+          jsonb_build_object(
+            'summary', left(${heartbeatRuns.resultJson} ->> 'summary', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+            'result', left(${heartbeatRuns.resultJson} ->> 'result', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+            'message', left(${heartbeatRuns.resultJson} ->> 'message', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+            'error', left(${heartbeatRuns.resultJson} ->> 'error', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
+            'total_cost_usd', ${heartbeatRuns.resultJson} ->> 'total_cost_usd',
+            'cost_usd', ${heartbeatRuns.resultJson} ->> 'cost_usd',
+            'costUsd', ${heartbeatRuns.resultJson} ->> 'costUsd'
+          )
+        `.as("resultJson"),
       })
       .from(heartbeatRuns)
       .where(and(eq(heartbeatRuns.agentId, agent.id), eq(heartbeatRuns.sessionIdAfter, sessionId)))
@@ -3548,15 +3566,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       };
     }
 
-    const latestSummary = summarizeHeartbeatRunListResultJson({
-      summary: latestRun?.resultSummary,
-      result: latestRun?.resultResult,
-      message: latestRun?.resultMessage,
-      error: latestRun?.resultError,
-      totalCostUsd: latestRun?.resultTotalCostUsd,
-      costUsd: latestRun?.resultCostUsd,
-      costUsdCamel: latestRun?.resultCostUsdCamel,
-    });
+    const latestSummary = latestRun?.resultJson
+      ? summarizeHeartbeatRunListResultJson({
+          summary: latestRun.resultJson.summary as string | null | undefined,
+          result: latestRun.resultJson.result as string | null | undefined,
+          message: latestRun.resultJson.message as string | null | undefined,
+          error: latestRun.resultJson.error as string | null | undefined,
+          totalCostUsd: latestRun.resultJson.total_cost_usd as string | null | undefined,
+          costUsd: latestRun.resultJson.costUsd as string | null | undefined,
+          costUsdCamel: latestRun.resultJson.cost_usd as string | null | undefined,
+        })
+      : null;
     const latestTextSummary =
       readNonEmptyString(latestSummary?.summary) ??
       readNonEmptyString(latestSummary?.result) ??
@@ -9937,6 +9957,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 ...heartbeatRunListColumns,
                 error: sql<string | null>`NULL`.as("error"),
                 ...heartbeatRunListContextColumns,
+                resultJson: sql<Record<string, unknown> | null>`NULL`.as("resultJson"),
               }
             : {
                 ...heartbeatRunListColumns,
@@ -9955,55 +9976,29 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       const rows = limit ? await query.limit(limit) : await query;
       return rows.map((row) => {
         const {
-          contextIssueId,
-          contextTaskId,
-          contextTaskKey,
-          contextCommentId,
-          contextWakeCommentId,
-          contextWakeReason,
-          contextWakeSource,
-          contextWakeTriggerDetail,
-          resultSummary,
-          resultResult,
-          resultMessage,
-          resultError,
-          resultTotalCostUsd,
-          resultCostUsd,
-          resultCostUsdCamel,
+          contextSnapshot: rawContextSnapshot,
+          resultJson: rawResultJson,
           ...rest
-        } = row as typeof row & {
-          resultSummary?: string | null;
-          resultResult?: string | null;
-          resultMessage?: string | null;
-          resultError?: string | null;
-          resultTotalCostUsd?: string | null;
-          resultCostUsd?: string | null;
-          resultCostUsdCamel?: string | null;
-        };
+        } = row;
 
         return {
           ...rest,
-          contextSnapshot: summarizeHeartbeatRunContextSnapshot({
-            issueId: contextIssueId,
-            taskId: contextTaskId,
-            taskKey: contextTaskKey,
-            commentId: contextCommentId,
-            wakeCommentId: contextWakeCommentId,
-            wakeReason: contextWakeReason,
-            wakeSource: contextWakeSource,
-            wakeTriggerDetail: contextWakeTriggerDetail,
-          }),
+          contextSnapshot: rawContextSnapshot
+            ? summarizeHeartbeatRunContextSnapshot(rawContextSnapshot)
+            : null,
           resultJson: safeForLegacyEncoding
             ? null
-            : summarizeHeartbeatRunListResultJson({
-                summary: resultSummary,
-                result: resultResult,
-                message: resultMessage,
-                error: resultError,
-                totalCostUsd: resultTotalCostUsd,
-                costUsd: resultCostUsd,
-                costUsdCamel: resultCostUsdCamel,
-              }),
+            : rawResultJson
+              ? summarizeHeartbeatRunListResultJson({
+                  summary: rawResultJson.summary as string | null | undefined,
+                  result: rawResultJson.result as string | null | undefined,
+                  message: rawResultJson.message as string | null | undefined,
+                  error: rawResultJson.error as string | null | undefined,
+                  totalCostUsd: rawResultJson.total_cost_usd as string | null | undefined,
+                  costUsd: rawResultJson.costUsd as string | null | undefined,
+                  costUsdCamel: rawResultJson.cost_usd as string | null | undefined,
+                })
+              : null,
         };
       });
     },
