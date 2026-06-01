@@ -283,4 +283,215 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       },
     });
   });
+
+  // --- Agent-accessible force-release endpoint tests ---
+
+  it("allows an assigned agent to force-release their own issue", async () => {
+    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Agent force release self",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: currentRunId,
+      executionRunId: failedRunId,
+    });
+
+    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
+      .post(`/api/issues/${issueId}/force-release`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.issue).toMatchObject({
+      id: issueId,
+      checkoutRunId: null,
+      executionRunId: null,
+    });
+    expect(res.body.previous).toEqual({
+      checkoutRunId: currentRunId,
+      executionRunId: failedRunId,
+    });
+  });
+
+  it("allows an assigned agent to force-release when assignee is unset", async () => {
+    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Agent force release unassigned",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: null,
+      checkoutRunId: currentRunId,
+      executionRunId: failedRunId,
+    });
+
+    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
+      .post(`/api/issues/${issueId}/force-release`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.issue.checkoutRunId).toBeNull();
+    expect(res.body.issue.executionRunId).toBeNull();
+  });
+
+  it("rejects a non-manager agent force-releasing another agent's issue with 403", async () => {
+    const companyId = randomUUID();
+    const agentAId = randomUUID();
+    const agentBId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      { id: agentAId, companyId, name: "AgentA", role: "engineer", status: "active", adapterType: "codex_local", adapterConfig: {}, runtimeConfig: {}, permissions: {} },
+      { id: agentBId, companyId, name: "AgentB", role: "engineer", status: "active", adapterType: "codex_local", adapterConfig: {}, runtimeConfig: {}, permissions: {} },
+    ]);
+    await db.insert(heartbeatRuns).values({
+      id: runId, companyId, agentId: agentAId, status: "running", invocationSource: "manual", startedAt: new Date(),
+    });
+
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Agent force release other",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentBId,
+      checkoutRunId: runId,
+      executionRunId: runId,
+    });
+
+    const res = await request(createApp(agentActor(companyId, agentAId, runId)))
+      .post(`/api/issues/${issueId}/force-release`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a board user on the agent-accessible endpoint with 403", async () => {
+    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Board user on agent endpoint",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: currentRunId,
+      executionRunId: failedRunId,
+    });
+
+    const res = await request(createApp(boardActor(companyId)))
+      .post(`/api/issues/${issueId}/force-release`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("allows a manager agent to force-release a subordinate's issue when reportsTo is set", async () => {
+    const companyId = randomUUID();
+    const managerId = randomUUID();
+    const subordinateId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      { id: managerId, companyId, name: "Manager", role: "manager", status: "active", adapterType: "claude", adapterConfig: {}, runtimeConfig: {}, permissions: {} },
+      { id: subordinateId, companyId, name: "Subordinate", role: "engineer", status: "active", adapterType: "codex_local", adapterConfig: {}, runtimeConfig: {}, permissions: {}, reportsTo: managerId },
+    ]);
+    await db.insert(heartbeatRuns).values({
+      id: runId, companyId, agentId: managerId, status: "running", invocationSource: "manual", startedAt: new Date(),
+    });
+
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Manager force release subordinate",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: subordinateId,
+      checkoutRunId: runId,
+      executionRunId: runId,
+    });
+
+    const res = await request(createApp(agentActor(companyId, managerId, runId)))
+      .post(`/api/issues/${issueId}/force-release`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.issue.checkoutRunId).toBeNull();
+    expect(res.body.issue.executionRunId).toBeNull();
+  });
+
+  it("writes an activity log entry for agent force-release", async () => {
+    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Force release audit",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: currentRunId,
+      executionRunId: failedRunId,
+    });
+
+    await request(createApp(agentActor(companyId, agentId, currentRunId)))
+      .post(`/api/issues/${issueId}/force-release`);
+
+    const [audit] = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.force_release"))
+      .then((rows) => rows);
+
+    expect(audit).toMatchObject({
+      action: "issue.force_release",
+      actorType: "agent",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        issueId,
+        prevCheckoutRunId: currentRunId,
+        prevExecutionRunId: failedRunId,
+        clearAssignee: false,
+      },
+    });
+  });
+
+  it("clears assignee when clearAssignee=true query param is passed", async () => {
+    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Force release clear assignee",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: currentRunId,
+      executionRunId: failedRunId,
+    });
+
+    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
+      .post(`/api/issues/${issueId}/force-release?clearAssignee=true`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.issue.assigneeAgentId).toBeNull();
+    expect(res.body.issue.checkoutRunId).toBeNull();
+    expect(res.body.issue.executionRunId).toBeNull();
+  });
 });
