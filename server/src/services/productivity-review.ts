@@ -679,6 +679,9 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     }
 
     const ownerAgentId = await resolveReviewOwnerAgentId(evidence.sourceIssue, evidence.sourceAgent);
+    if (!ownerAgentId) {
+      return { kind: "no_reviewer" as const, reviewIssueId: null };
+    }
     let review: Awaited<ReturnType<typeof issuesSvc.create>>;
     try {
       review = await issuesSvc.create(evidence.sourceIssue.companyId, {
@@ -788,6 +791,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       existing: 0,
       snoozed: 0,
       creationCapped: 0,
+      noReviewer: 0,
       skipped: 0,
       failed: 0,
       reviewIssueIds: [] as string[],
@@ -828,6 +832,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
         if (outcome.kind === "created") result.created += 1;
         else if (outcome.kind === "updated") result.updated += 1;
         else if (outcome.kind === "creation_capped") result.creationCapped += 1;
+        else if (outcome.kind === "no_reviewer") result.noReviewer += 1;
         else result.existing += 1;
         if (outcome.reviewIssueId) result.reviewIssueIds.push(outcome.reviewIssueId);
       } catch (err) {
