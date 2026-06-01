@@ -371,6 +371,7 @@ export function pluginManagedRoutineService(
       concurrencyPolicy: declaration.concurrencyPolicy ?? "coalesce_if_active",
       catchUpPolicy: declaration.catchUpPolicy ?? "skip_missed",
       variables: declaration.variables ?? [],
+      labelIds: [],
     }, { agentId: null, userId: null });
     await upsertBinding(companyId, declaration, created.id);
     await ensureDefaultTriggers(created.id, declaration);

@@ -158,6 +158,7 @@ function makeSnapshot(env: RoutineEnvConfig | null): RoutineRevisionSnapshotV1 {
       catchUpPolicy: "skip_missed",
       variables: [],
       env,
+      executionLabelIds: [],
     },
     triggers: [],
   };
@@ -190,6 +191,7 @@ function makeRoutine(latestRevisionId: string, latestRevisionNumber: number): Ro
     updatedByUserId: "user-board",
     lastTriggeredAt: null,
     lastEnqueuedAt: null,
+    executionLabelIds: [],
     createdAt: new Date("2026-05-01T11:00:00.000Z"),
     updatedAt: new Date("2026-05-04T12:00:00.000Z"),
   };

@@ -414,6 +414,7 @@ function routineRevisionSnapshotRoutine(routine: RoutineRow): RoutineRevisionSna
     catchUpPolicy: routine.catchUpPolicy as RoutineRevisionSnapshotV1["routine"]["catchUpPolicy"],
     variables: routine.variables ?? [],
     env: routine.env ?? null,
+    executionLabelIds: routine.executionLabelIds ?? [],
   };
 }
 
@@ -1256,6 +1257,7 @@ export function routineService(
             executionWorkspaceId: input.executionWorkspaceId ?? null,
             executionWorkspacePreference: input.executionWorkspacePreference ?? null,
             executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,
+            labelIds: input.routine.executionLabelIds ?? [],
           });
         } catch (error) {
           const isOpenExecutionConflict =
@@ -1553,6 +1555,7 @@ export function routineService(
             catchUpPolicy: input.catchUpPolicy,
             variables,
             env,
+            executionLabelIds: input.labelIds ?? [],
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.userId ?? null,
             updatedByAgentId: actor.agentId ?? null,
@@ -1651,6 +1654,7 @@ export function routineService(
           catchUpPolicy: patch.catchUpPolicy ?? locked.catchUpPolicy,
           variables: nextVariables,
           env: nextEnv,
+          executionLabelIds: patch.labelIds ?? locked.executionLabelIds,
           updatedByAgentId: actor.agentId ?? null,
           updatedByUserId: actor.userId ?? null,
         };
@@ -1700,6 +1704,7 @@ export function routineService(
             catchUpPolicy: candidate.catchUpPolicy,
             variables: candidate.variables,
             env: candidate.env,
+            executionLabelIds: candidate.executionLabelIds,
             updatedByAgentId: actor.agentId ?? null,
             updatedByUserId: actor.userId ?? null,
             updatedAt: new Date(),
