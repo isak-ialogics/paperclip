@@ -1,0 +1,1 @@
+ALTER TABLE "companies" ADD COLUMN "max_recovery_depth" integer DEFAULT 3 NOT NULL;

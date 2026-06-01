@@ -23,6 +23,7 @@ function makeCompany(overrides: Partial<Company>): Company {
     brandColor: null,
     logoAssetId: null,
     logoUrl: null,
+    maxRecoveryDepth: 3,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,

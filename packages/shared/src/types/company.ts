@@ -20,6 +20,7 @@ export interface Company {
   brandColor: string | null;
   logoAssetId: string | null;
   logoUrl: string | null;
+  maxRecoveryDepth: number;
   createdAt: Date;
   updatedAt: Date;
 }

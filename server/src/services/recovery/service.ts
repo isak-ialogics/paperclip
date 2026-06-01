@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, gte, inArray, isNull, notInArray, sql } from "d
 import type { Db } from "@paperclipai/db";
 import {
   DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
+  DEFAULT_MAX_RECOVERY_DEPTH,
   MAX_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MIN_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   type IssueGraphLivenessAutoRecoveryPreview,
@@ -461,6 +462,71 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
   async function getAgent(agentId: string) {
     return db.select().from(agents).where(eq(agents.id, agentId)).then((rows) => rows[0] ?? null);
+  }
+
+  async function getCompanyMaxRecoveryDepth(companyId: string): Promise<number> {
+    return db
+      .select({ maxRecoveryDepth: companies.maxRecoveryDepth })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1)
+      .then((rows) => (rows.length > 0 ? rows[0].maxRecoveryDepth : DEFAULT_MAX_RECOVERY_DEPTH));
+  }
+
+  async function checkRecoveryDepthCap(input: {
+    companyId: string;
+    issueId: string;
+    issueRequestDepth: number;
+  }): Promise<{ allowed: true } | { allowed: false; blockedIssue: typeof issues.$inferSelect | null }> {
+    const maxDepth = await getCompanyMaxRecoveryDepth(input.companyId);
+    if (input.issueRequestDepth < maxDepth) {
+      return { allowed: true };
+    }
+
+    // Depth cap exceeded — block the issue and return the blocked issue for reference.
+    const blockedIssue = await issuesSvc.update(input.issueId, {
+      status: "blocked",
+    });
+
+    if (!blockedIssue) {
+      return { allowed: false, blockedIssue: null };
+    }
+
+    const issueDetails = await db
+      .select({ identifier: issues.identifier, id: issues.id })
+      .from(issues)
+      .where(eq(issues.id, input.issueId))
+      .then((rows) => rows[0]);
+
+    const commentBody = [
+      `[System] Recovery depth cap reached: issue request depth (${input.issueRequestDepth}) >= company maxRecoveryDepth (${maxDepth}).`,
+      "",
+      "Further recovery spawning is blocked to prevent cascade. The issue has been moved to `blocked` state.",
+      "",
+      issueDetails ? `**Source issue:** [${issueDetails.identifier}](/${issueDetails.identifier?.split("-")[0] ?? "PAP"}/issues/${issueDetails.identifier})` : "",
+      "",
+      "To resume: lower the company `maxRecoveryDepth` setting or resolve the underlying issue manually.",
+    ].filter(Boolean).join("\n");
+
+    await issuesSvc.addComment(input.issueId, commentBody, {});
+
+    await logActivity(db, {
+      companyId: input.companyId,
+      actorType: "system",
+      actorId: "system",
+      action: "issue.recovery_depth_cap_exceeded",
+      entityType: "issue",
+      entityId: input.issueId,
+      details: {
+        requestDepth: input.issueRequestDepth,
+        maxRecoveryDepth: maxDepth,
+      },
+    });
+
+    return {
+      allowed: false,
+      blockedIssue,
+    };
   }
 
   async function getLatestIssueRun(companyId: string, issueId: string): Promise<LatestIssueRun> {
@@ -1529,6 +1595,15 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       return { kind: "existing" as const, evaluationIssueId: existing.id };
     }
 
+    if (sourceIssue) {
+      const depthCheck = await checkRecoveryDepthCap({
+        companyId: sourceIssue.companyId,
+        issueId: sourceIssue.id,
+        issueRequestDepth: sourceIssue.requestDepth,
+      });
+      if (!depthCheck.allowed) return { kind: "depth_cap_blocked" as const };
+    }
+
     const ownerAgentId = await resolveStaleRunOwnerAgentId({ run: input.run, runningAgent, sourceIssue });
     const description = buildStaleRunEvaluationDescription({
       run: input.run,
@@ -1961,6 +2036,13 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
     const ownerAgentId = await resolveStrandedIssueRecoveryOwnerAgentId(input.issue);
     if (!ownerAgentId) return null;
+
+    const depthCheck = await checkRecoveryDepthCap({
+      companyId: input.issue.companyId,
+      issueId: input.issue.id,
+      issueRequestDepth: input.issue.requestDepth,
+    });
+    if (!depthCheck.allowed) return null;
 
     const prefix = await getCompanyIssuePrefix(input.issue.companyId);
     const sourceAssignee = input.issue.assigneeAgentId ? await getAgent(input.issue.assigneeAgentId) : null;
@@ -3357,6 +3439,13 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     if (await isAutomaticRecoverySuppressedByPauseHold(db, issue.companyId, issue.id, treeControlSvc)) {
       return { kind: "skipped" as const };
     }
+
+    const depthCheck = await checkRecoveryDepthCap({
+      companyId: issue.companyId,
+      issueId: issue.id,
+      issueRequestDepth: issue.requestDepth,
+    });
+    if (!depthCheck.allowed) return { kind: "depth_cap_blocked" as const };
 
     const recoveryIssue = await db
       .select()
