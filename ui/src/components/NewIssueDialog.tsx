@@ -430,6 +430,8 @@ export function NewIssueDialog() {
   const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
   const [workMode, setWorkMode] = useState<IssueWorkMode>("standard");
+  const [billingCode, setBillingCode] = useState("");
+  const [showBillingCode, setShowBillingCode] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
@@ -910,6 +912,8 @@ export function NewIssueDialog() {
     setStagedFiles([]);
     setIsFileDragOver(false);
     setCompanyOpen(false);
+    setBillingCode("");
+    setShowBillingCode(false);
     executionWorkspaceDefaultProjectId.current = null;
     initializationKeyRef.current = null;
   }
@@ -996,6 +1000,7 @@ export function NewIssueDialog() {
         : {}),
       ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
       ...(executionPolicy ? { executionPolicy } : {}),
+      ...(billingCode.trim() ? { billingCode: billingCode.trim() } : {}),
     });
   }
 
@@ -1566,6 +1571,21 @@ export function NewIssueDialog() {
                 />
               </div>
             )}
+
+            {/* Billing code row */}
+            {showBillingCode && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                <span className="w-6 shrink-0 flex items-center justify-center"><Tag className="h-3.5 w-3.5" /></span>
+                <input
+                  type="text"
+                  placeholder="Billing code"
+                  className="flex-1 bg-transparent border-none outline-none text-sm text-foreground placeholder:text-muted-foreground"
+                  value={billingCode}
+                  onChange={(e) => setBillingCode(e.target.value)}
+                  data-testid="new-issue-billing-code-input"
+                />
+              </div>
+            )}
           </div>
 
           {isSubIssueMode ? (
@@ -2013,6 +2033,20 @@ export function NewIssueDialog() {
               <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
                 Due date
+              </button>
+              <button
+                className={cn(
+                  "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+                  showBillingCode && "bg-accent",
+                )}
+                onClick={() => {
+                  setShowBillingCode((v) => !v);
+                  if (showBillingCode) setBillingCode("");
+                  setMoreOpen(false);
+                }}
+              >
+                <Tag className="h-3 w-3" />
+                Billing code
               </button>
             </PopoverContent>
           </Popover>
