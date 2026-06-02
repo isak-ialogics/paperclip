@@ -77,6 +77,10 @@ function execInProcessGroup(
       killGroup();
       reject(err);
     });
+
+    // Unref so the parent event loop doesn't wait for the process group on exit,
+    // preventing orphaned `script` children from causing OOM after run completion.
+    child.unref();
   });
 }
 
