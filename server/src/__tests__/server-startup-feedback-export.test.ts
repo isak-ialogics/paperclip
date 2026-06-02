@@ -102,9 +102,12 @@ vi.mock("detect-port", () => ({
 vi.mock("@paperclipai/db", () => ({
   createDb: createDbMock,
   ensurePostgresDatabase: vi.fn(),
+  formatEmbeddedPostgresError: vi.fn(() => "embedded postgres error"),
   getPostgresDataDirectory: vi.fn(),
   inspectMigrations: vi.fn(async () => ({ status: "upToDate" })),
   applyPendingMigrations: vi.fn(),
+  createEmbeddedPostgresLogBuffer: vi.fn(() => ({ getLogs: vi.fn(() => []) })),
+  prepareEmbeddedPostgresNativeRuntime: vi.fn(),
   reconcilePendingMigrationHistory: vi.fn(async () => ({ repairedMigrations: [] })),
   formatDatabaseBackupResult: vi.fn(() => "ok"),
   runDatabaseBackup: vi.fn(),
