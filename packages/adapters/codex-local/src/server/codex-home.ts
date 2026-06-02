@@ -5,7 +5,7 @@ import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-utils/server-utils";
 
 const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
-const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
+const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md", ".env"] as const;
 const SYMLINKED_SHARED_FILES = ["auth.json"] as const;
 
 function nonEmpty(value: string | undefined): string | null {
