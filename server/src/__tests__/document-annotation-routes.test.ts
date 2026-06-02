@@ -134,6 +134,7 @@ function registerModuleMocks() {
     issueThreadInteractionService: () => ({
       expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
       expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
+      cancelPendingOnIssueClose: vi.fn(async () => undefined),
     }),
     logActivity: mockLogActivity,
     projectService: () => ({}),

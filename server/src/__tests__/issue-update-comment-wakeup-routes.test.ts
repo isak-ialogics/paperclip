@@ -25,6 +25,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
 const mockIssueThreadInteractionService = vi.hoisted(() => ({
   expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
   expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
+      cancelPendingOnIssueClose: vi.fn(async () => undefined),
 }));
 
 vi.mock("../services/index.js", () => ({
