@@ -129,19 +129,38 @@ async function prepareCodexHelloProbe(input: {
     const probeHome = input.targetIsRemote
       ? path.posix.join(input.cwd, ".paperclip-runtime", "codex", `probe-home-${input.runId}`)
       : path.join(os.tmpdir(), `paperclip-codex-probe-${input.runId}`);
-    await writeApiKeyAuthJson(probeHome, input.probeApiKey);
-    const cleanupWithAuth = async () => {
-      await fs.rm(probeHome, { recursive: true, force: true }).catch(() => {});
-      await cleanup();
-    };
+    if (!input.targetIsRemote) {
+      // Local target: write auth.json directly using fs (Windows-compatible, no sh required).
+      await writeApiKeyAuthJson(probeHome, input.probeApiKey);
+      const cleanupWithAuth = async () => {
+        await fs.rm(probeHome, { recursive: true, force: true }).catch(() => {});
+        await cleanup();
+      };
+      return {
+        command: input.command,
+        args: input.args,
+        env: {
+          ...input.env,
+          CODEX_HOME: probeHome,
+        },
+        cleanup: cleanupWithAuth,
+      };
+    }
+    // Remote target: use sh wrapper — runs on the remote machine where sh is available.
     return {
-      command: input.command,
-      args: input.args,
+      command: "sh",
+      args: [
+        "-c",
+        'set -e; mkdir -p "$CODEX_HOME"; umask 077; printf "%s" "$_PAPERCLIP_CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"; unset _PAPERCLIP_CODEX_AUTH_JSON; trap \'rm -rf "$CODEX_HOME"\' EXIT INT TERM; "$0" "$@"',
+        input.command,
+        ...input.args,
+      ],
       env: {
         ...input.env,
         CODEX_HOME: probeHome,
+        _PAPERCLIP_CODEX_AUTH_JSON: JSON.stringify({ OPENAI_API_KEY: input.probeApiKey }),
       },
-      cleanup: cleanupWithAuth,
+      cleanup,
     };
   }
 
