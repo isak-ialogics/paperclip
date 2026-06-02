@@ -438,16 +438,25 @@ async function clearLocalDirectory(
   );
 }
 
-async function copyDirectoryContents(sourceDir: string, targetDir: string): Promise<void> {
+async function copyDirectoryContents(
+  sourceDir: string,
+  targetDir: string,
+  exclude: string[] = [],
+): Promise<void> {
   await fs.mkdir(targetDir, { recursive: true });
+  const excludeSet = new Set(exclude);
   const entries = await fs.readdir(sourceDir);
-  await Promise.all(entries.map(async (entry) => {
-    await fs.cp(path.join(sourceDir, entry), path.join(targetDir, entry), {
-      recursive: true,
-      force: true,
-      preserveTimestamps: true,
-    });
-  }));
+  await Promise.all(
+    entries
+      .filter((entry) => !excludeSet.has(entry))
+      .map(async (entry) => {
+        await fs.cp(path.join(sourceDir, entry), path.join(targetDir, entry), {
+          recursive: true,
+          force: true,
+          preserveTimestamps: true,
+        });
+      }),
+  );
 }
 
 async function readLocalGitWorkspaceSnapshot(localDir: string): Promise<LocalGitWorkspaceSnapshot | null> {
@@ -1198,7 +1207,7 @@ export async function syncDirectoryFromSsh(input: {
     });
 
     await clearLocalDirectory(input.localDir, input.preserveLocalEntries);
-    await copyDirectoryContents(stagingDir, input.localDir);
+    await copyDirectoryContents(stagingDir, input.localDir, input.exclude);
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     await auth.cleanup();
