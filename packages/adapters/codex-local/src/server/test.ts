@@ -24,7 +24,7 @@ import { parseCodexJsonl } from "./parse.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { codexHomeDir, readCodexAuthInfo } from "./quota.js";
 import { buildCodexExecArgs } from "./codex-args.js";
-import { prepareManagedCodexHome } from "./codex-home.js";
+import { prepareManagedCodexHome, writeApiKeyAuthJson } from "./codex-home.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -129,6 +129,24 @@ async function prepareCodexHelloProbe(input: {
     const probeHome = input.targetIsRemote
       ? path.posix.join(input.cwd, ".paperclip-runtime", "codex", `probe-home-${input.runId}`)
       : path.join(os.tmpdir(), `paperclip-codex-probe-${input.runId}`);
+    if (!input.targetIsRemote) {
+      // Local target: write auth.json directly using fs (Windows-compatible, no sh required).
+      await writeApiKeyAuthJson(probeHome, input.probeApiKey);
+      const cleanupWithAuth = async () => {
+        await fs.rm(probeHome, { recursive: true, force: true }).catch(() => {});
+        await cleanup();
+      };
+      return {
+        command: input.command,
+        args: input.args,
+        env: {
+          ...input.env,
+          CODEX_HOME: probeHome,
+        },
+        cleanup: cleanupWithAuth,
+      };
+    }
+    // Remote target: use sh wrapper — runs on the remote machine where sh is available.
     return {
       command: "sh",
       args: [
