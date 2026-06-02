@@ -87,6 +87,7 @@ vi.mock("../services/index.js", () => ({
     listForIssue: vi.fn(async () => []),
     expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
     expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
+      cancelPendingOnIssueClose: vi.fn(async () => undefined),
   }),
   issueService: () => mockIssueService,
   logActivity: mockLogActivity,
