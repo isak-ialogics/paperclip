@@ -1325,6 +1325,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
         remoteDir,
         localDir: input.localDir,
         exclude: [".git", ".paperclip-runtime"],
+        preserveLocalEntries: [".git"],
       });
       await integrateImportedGitHead({
         localDir: input.localDir,
