@@ -41,7 +41,11 @@ const mockTx = vi.hoisted(() => ({
   insert: mockTxInsert,
 }));
 const mockDbSelectOrderBy = vi.hoisted(() => vi.fn(async () => []));
-const mockDbSelectWhere = vi.hoisted(() => vi.fn(() => ({ orderBy: mockDbSelectOrderBy })));
+const mockDbSelectWhere = vi.hoisted(() => vi.fn(() => ({
+  orderBy: mockDbSelectOrderBy,
+  then: (onFulfilled: (rows: unknown[]) => unknown, onRejected?: (reason: unknown) => unknown) =>
+    Promise.resolve([]).then(onFulfilled, onRejected),
+})));
 const mockDbSelectFrom = vi.hoisted(() => vi.fn(() => ({ where: mockDbSelectWhere })));
 const mockDbSelect = vi.hoisted(() => vi.fn(() => ({ from: mockDbSelectFrom })));
 const mockDb = vi.hoisted(() => ({
@@ -68,7 +72,6 @@ const mockRoutineService = vi.hoisted(() => ({
 const mockIssueThreadInteractionService = vi.hoisted(() => ({
   expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
   expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
-      cancelPendingOnIssueClose: vi.fn(async () => undefined),
 }));
 const mockIssueRecoveryActionService = vi.hoisted(() => ({
   getActiveForIssue: vi.fn(async () => null),
@@ -260,7 +263,11 @@ describe.sequential("issue comment reopen routes", () => {
     mockTxInsertValues.mockResolvedValue(undefined);
     mockTxInsert.mockImplementation(() => ({ values: mockTxInsertValues }));
     mockDbSelectOrderBy.mockResolvedValue([]);
-    mockDbSelectWhere.mockImplementation(() => ({ orderBy: mockDbSelectOrderBy }));
+    mockDbSelectWhere.mockImplementation(() => ({
+      orderBy: mockDbSelectOrderBy,
+      then: (onFulfilled: (rows: unknown[]) => unknown, onRejected?: (reason: unknown) => unknown) =>
+        Promise.resolve([]).then(onFulfilled, onRejected),
+    }));
     mockDbSelectFrom.mockImplementation(() => ({ where: mockDbSelectWhere }));
     mockDbSelect.mockImplementation(() => ({ from: mockDbSelectFrom }));
     mockDb.transaction.mockImplementation(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx));
@@ -515,39 +522,6 @@ describe.sequential("issue comment reopen routes", () => {
     ));
   });
 
-  it("does not enqueue issue_comment_mentioned from inline-code agent mention examples", async () => {
-    const issue = {
-      ...makeIssue("todo"),
-      assigneeAgentId: null,
-      assigneeUserId: "local-board",
-    };
-    const body = [
-      "Only the prose should matter here.",
-      "",
-      "`[@Seneschal](agent://33333333-3333-4333-8333-333333333333)` is an example, not a real mention.",
-    ].join("\n");
-    mockIssueService.getById.mockResolvedValue(issue);
-    mockIssueService.addComment.mockResolvedValue({
-      id: "comment-1",
-      issueId: issue.id,
-      companyId: issue.companyId,
-      body,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      authorAgentId: null,
-      authorUserId: "local-board",
-    });
-    mockIssueService.findMentionedAgents.mockResolvedValue([]);
-
-    const res = await request(await installActor(createApp()))
-      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
-      .send({ body });
-
-    expect(res.status).toBe(201);
-    expect(mockIssueService.findMentionedAgents).toHaveBeenCalledWith("company-1", body);
-    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
-  });
-
   it("rejects non-assignee agent POST comments on closed issues", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("done"));
     mockIssueService.addComment.mockResolvedValue({
@@ -778,6 +752,7 @@ describe.sequential("issue comment reopen routes", () => {
         authorType: "user",
         presentation: { kind: "system_notice", tone: "warning", detailsDefaultOpen: false },
         metadata,
+        sourceTrust: null,
       },
     );
   });

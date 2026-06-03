@@ -7,6 +7,23 @@ import { stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Request as ExpressRequest, RequestHandler } from "express";
 import { and, eq } from "drizzle-orm";
+import {
+  createDb,
+  ensurePostgresDatabase,
+  formatEmbeddedPostgresError,
+  getPostgresDataDirectory,
+  inspectMigrations,
+  applyPendingMigrations,
+  createEmbeddedPostgresLogBuffer,
+  prepareEmbeddedPostgresNativeRuntime,
+  reconcilePendingMigrationHistory,
+  formatDatabaseBackupResult,
+  runDatabaseBackup,
+  authUsers,
+  companies,
+  companyMemberships,
+  instanceUserRoles,
+} from "@paperclipai/db";
 import detectPort from "detect-port";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
@@ -84,30 +101,6 @@ export async function startServer(): Promise<StartedServer> {
   if (process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE === undefined) {
     process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE = config.secretsMasterKeyFilePath;
   }
-
-  // Lazy-load @paperclipai/db to avoid eager sqlite3 native binding resolution
-  // on platforms where sqlite3 is not installed. The db package is only needed
-  // when database.mode === "postgres" (external PostgreSQL) or when embedded
-  // PostgreSQL is used. By deferring the import until after config is loaded,
-  // we ensure sqlite3 is never loaded at module-evaluation time.
-  const dbMod = await import("@paperclipai/db");
-  const {
-    createDb,
-    ensurePostgresDatabase,
-    formatEmbeddedPostgresError,
-    getPostgresDataDirectory,
-    inspectMigrations,
-    applyPendingMigrations,
-    createEmbeddedPostgresLogBuffer,
-    prepareEmbeddedPostgresNativeRuntime,
-    reconcilePendingMigrationHistory,
-    formatDatabaseBackupResult,
-    runDatabaseBackup,
-    authUsers,
-    companies,
-    companyMemberships,
-    instanceUserRoles,
-  } = dbMod;
   
   type MigrationSummary =
     | "skipped"
@@ -508,9 +501,7 @@ export async function startServer(): Promise<StartedServer> {
 
   const requestedListenPort = config.port;
   const listenPort = await detectPort(requestedListenPort);
-  // Explicit mode: the operator set the exact public URL — do not rewrite it.
-  // Only rewrite derived/implicit URLs when detectPort bumped the listen port.
-  if (config.authBaseUrlMode !== "explicit" && config.authPublicBaseUrl && listenPort !== requestedListenPort) {
+  if (config.authBaseUrlMode === "explicit" && config.authPublicBaseUrl) {
     config.authPublicBaseUrl = rewriteLocalUrlPort(config.authPublicBaseUrl, listenPort);
   }
   

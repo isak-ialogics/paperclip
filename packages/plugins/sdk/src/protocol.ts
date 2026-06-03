@@ -527,20 +527,6 @@ export interface PluginEnvironmentExecuteResult {
 }
 
 // ---------------------------------------------------------------------------
-// resolveRunContext — pre-execution context injection
-// ---------------------------------------------------------------------------
-
-export interface ResolveRunContextParams {
-  agentId: string;
-  companyId: string;
-  taskContext: string;
-}
-
-export interface ResolveRunContextResult {
-  context: string | null;
-}
-
-// ---------------------------------------------------------------------------
 // UI launcher / modal host interaction payloads
 // ---------------------------------------------------------------------------
 
@@ -641,10 +627,6 @@ export interface HostToWorkerMethods {
     params: PluginEnvironmentExecuteParams,
     result: PluginEnvironmentExecuteResult,
   ];
-  resolveRunContext: [
-    params: ResolveRunContextParams,
-    result: ResolveRunContextResult,
-  ];
 }
 
 /** Union of all host→worker method names. */
@@ -676,7 +658,6 @@ export const HOST_TO_WORKER_OPTIONAL_METHODS: readonly HostToWorkerMethodName[] 
   "environmentDestroyLease",
   "environmentRealizeWorkspace",
   "environmentExecute",
-  "resolveRunContext",
 ] as const;
 
 // ---------------------------------------------------------------------------

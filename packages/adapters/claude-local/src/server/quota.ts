@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,83 +6,6 @@ import { promisify } from "node:util";
 import type { ProviderQuotaResult, QuotaWindow } from "@paperclipai/adapter-utils";
 
 const execFileAsync = promisify(execFile);
-
-/**
- * Run a shell command in its own process group so we can kill the entire group
- * (including orphan-prone children like `script`) on timeout or completion.
- */
-function execInProcessGroup(
-  command: string,
-  opts: { env?: NodeJS.ProcessEnv; timeoutMs: number; maxBuffer: number },
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("sh", ["-c", command], {
-      env: opts.env,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let totalBytes = 0;
-
-    const killGroup = () => {
-      try {
-        process.kill(-child.pid!, "SIGTERM");
-      } catch {
-        /* already gone */
-      }
-    };
-
-    const timer = setTimeout(() => {
-      killGroup();
-      reject(
-        Object.assign(new Error("Command timed out"), {
-          stdout: Buffer.concat(stdoutChunks).toString(),
-          stderr: Buffer.concat(stderrChunks).toString(),
-        }),
-      );
-    }, opts.timeoutMs);
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      totalBytes += chunk.length;
-      if (totalBytes > opts.maxBuffer) {
-        killGroup();
-        clearTimeout(timer);
-        reject(new Error("stdout maxBuffer exceeded"));
-        return;
-      }
-      stdoutChunks.push(chunk);
-    });
-
-    child.stderr?.on("data", (chunk: Buffer) => {
-      totalBytes += chunk.length;
-      stderrChunks.push(chunk);
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      killGroup();
-      const stdout = Buffer.concat(stdoutChunks).toString();
-      const stderr = Buffer.concat(stderrChunks).toString();
-      if (code !== 0) {
-        reject(Object.assign(new Error(`Process exited with code ${code}`), { stdout, stderr }));
-      } else {
-        resolve({ stdout, stderr });
-      }
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      killGroup();
-      reject(err);
-    });
-
-    // Unref so the parent event loop doesn't wait for the process group on exit,
-    // preventing orphaned `script` children from causing OOM after run completion.
-    child.unref();
-  });
-}
 
 const CLAUDE_USAGE_SOURCE_OAUTH = "anthropic-oauth";
 const CLAUDE_USAGE_SOURCE_CLI = "claude-cli";
@@ -214,40 +137,13 @@ function describeClaudeSubscriptionAuth(status: ClaudeAuthStatus | null): string
     : "Claude is logged in via claude.ai";
 }
 
-/** macOS stores the Claude Code OAuth credentials in the login Keychain rather
- *  than in ~/.claude/.credentials.json, so fall back to reading it from there. */
-async function readClaudeTokenFromKeychain(): Promise<string | null> {
-  if (process.platform !== "darwin") return null;
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync(
-      "security",
-      ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-      { timeout: 5_000, maxBuffer: 1024 * 1024 },
-    ));
-  } catch {
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const oauth = (parsed as Record<string, unknown>)["claudeAiOauth"];
-  if (typeof oauth !== "object" || oauth === null) return null;
-  const token = (oauth as Record<string, unknown>)["accessToken"];
-  return typeof token === "string" && token.length > 0 ? token : null;
-}
-
 export async function readClaudeToken(): Promise<string | null> {
   const configDir = claudeConfigDir();
   for (const filename of [".credentials.json", "credentials.json"]) {
     const token = await readClaudeTokenFromFile(path.join(configDir, filename));
     if (token) return token;
   }
-  return readClaudeTokenFromKeychain();
+  return null;
 }
 
 interface AnthropicUsageWindow {
@@ -544,9 +440,9 @@ function buildClaudeCliShellProbeCommand(): string {
 export async function captureClaudeCliUsageText(timeoutMs = 12_000): Promise<string> {
   const command = buildClaudeCliShellProbeCommand();
   try {
-    const { stdout, stderr } = await execInProcessGroup(command, {
+    const { stdout, stderr } = await execFileAsync("sh", ["-c", command], {
       env: createClaudeQuotaEnv(),
-      timeoutMs,
+      timeout: timeoutMs,
       maxBuffer: 8 * 1024 * 1024,
     });
     const output = `${stdout}${stderr}`;

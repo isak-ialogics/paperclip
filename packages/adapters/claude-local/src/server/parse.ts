@@ -150,9 +150,6 @@ export function detectClaudeLoginRequired(input: {
 
 export function describeClaudeFailure(parsed: Record<string, unknown>): string | null {
   const subtype = asString(parsed.subtype, "");
-  const isError = parsed.is_error === true || asString(parsed.is_error, "").trim().toLowerCase() === "true";
-  // A successful result is NOT a failure: don't mislabel subtype="success" (or empty) turns.
-  if (!isError && (subtype === "" || subtype === "success")) return null;
   const resultText = asString(parsed.result, "").trim();
   const errors = extractClaudeErrorMessages(parsed);
 
@@ -199,14 +196,14 @@ export function isClaudeUnknownSessionError(parsed: Record<string, unknown>): bo
   );
 }
 
-export function isClaudeModifiedThinkingError(parsed: Record<string, unknown>): boolean {
+export function isClaudePoisonedPreviousMessageIdError(parsed: Record<string, unknown>): boolean {
   const resultText = asString(parsed.result, "").trim();
   const allMessages = [resultText, ...extractClaudeErrorMessages(parsed)]
     .map((msg) => msg.trim())
     .filter(Boolean);
 
   return allMessages.some((msg) =>
-    /thinking.*cannot be modified|redacted_thinking.*cannot be modified|cannot modify thinking|cannot modify redacted_thinking/i.test(msg),
+    /diagnostics\.previous_message_id.*starts with `msg_`/i.test(msg),
   );
 }
 
@@ -389,7 +386,7 @@ export function isClaudeTransientUpstreamError(input: {
 }): boolean {
   const parsed = input.parsed ?? null;
   // Deterministic failures are handled by their own classifiers.
-  if (parsed && (isClaudeMaxTurnsResult(parsed) || isClaudeUnknownSessionError(parsed) || isClaudeModifiedThinkingError(parsed))) {
+  if (parsed && (isClaudeMaxTurnsResult(parsed) || isClaudeUnknownSessionError(parsed) || isClaudePoisonedPreviousMessageIdError(parsed))) {
     return false;
   }
   const loginMeta = detectClaudeLoginRequired({

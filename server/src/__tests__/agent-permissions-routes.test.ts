@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
+import { LOW_TRUST_REVIEW_PRESET } from "@paperclipai/shared";
 
 vi.mock("acpx/runtime", () => ({
   createAcpRuntime: vi.fn(),
@@ -12,7 +13,6 @@ vi.mock("acpx/runtime", () => ({
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
-const OTHER_COMPANY_ID = "33333333-3333-4333-8333-333333333333";
 
 const baseAgent = {
   id: agentId,
@@ -74,9 +74,6 @@ const mockHeartbeatService = vi.hoisted(() => ({
   resetRuntimeSession: vi.fn(),
   getRun: vi.fn(),
   cancelRun: vi.fn(),
-  list: vi.fn(),
-  stats: vi.fn(),
-  latestFailed: vi.fn(),
 }));
 
 const mockIssueApprovalService = vi.hoisted(() => ({
@@ -400,6 +397,11 @@ describe.sequential("agent permission routes", () => {
 
   it("redacts agent detail for authenticated company members without agent admin permission", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
+    mockAccessService.decide.mockImplementation(async (input: { action?: string }) => ({
+      allowed: input.action === "agent:read",
+      reason: input.action === "agent:read" ? "allow_test_read" : "deny_missing_grant",
+      explanation: input.action === "agent:read" ? "Allowed by test read grant." : "Missing test grant.",
+    }));
 
     const app = await createApp({
       type: "board",
@@ -416,8 +418,54 @@ describe.sequential("agent permission routes", () => {
     expect(res.body.runtimeConfig).toEqual({});
   }, 20_000);
 
+  it("keeps board agent detail unredacted for low-trust agents", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      permissions: {
+        ...baseAgent.permissions,
+        trustPreset: LOW_TRUST_REVIEW_PRESET,
+      },
+      adapterConfig: {
+        command: "pnpm agent:run",
+        env: { PAPERCLIP_API_KEY: "secret-test-key" },
+      },
+      runtimeConfig: {
+        modelProfiles: {
+          default: { enabled: true, adapterConfig: { model: "openai/gpt-5.4-mini" } },
+        },
+      },
+    });
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}`));
+
+    expect(res.status).toBe(200);
+    expect(res.body.adapterConfig).toMatchObject({
+      command: "pnpm agent:run",
+      env: { PAPERCLIP_API_KEY: "secret-test-key" },
+    });
+    expect(res.body.runtimeConfig).toMatchObject({
+      modelProfiles: {
+        default: { enabled: true, adapterConfig: { model: "openai/gpt-5.4-mini" } },
+      },
+    });
+    expect(res.body.permissions).toMatchObject({ trustPreset: LOW_TRUST_REVIEW_PRESET });
+  }, 20_000);
+
   it("redacts company agent list for authenticated company members without agent admin permission", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
+    mockAccessService.decide.mockImplementation(async (input: { action?: string }) => ({
+      allowed: input.action === "agent:read",
+      reason: input.action === "agent:read" ? "allow_test_read" : "deny_missing_grant",
+      explanation: input.action === "agent:read" ? "Allowed by test read grant." : "Missing test grant.",
+    }));
 
     const app = await createApp({
       type: "board",
@@ -1464,88 +1512,5 @@ describe.sequential("agent permission routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects heartbeat stats for a company the caller cannot access", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: [companyId],
-    });
-
-    const res = await requestApp(app, (baseUrl) =>
-      request(baseUrl).get(`/api/companies/${OTHER_COMPANY_ID}/heartbeat-runs/stats`));
-
-    expect(res.status).toBe(403);
-    expect(mockHeartbeatService.stats).not.toHaveBeenCalled();
-  });
-
-  it("rejects latest-failed for a company the caller cannot access", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: [companyId],
-    });
-
-    const res = await requestApp(app, (baseUrl) =>
-      request(baseUrl).get(`/api/companies/${OTHER_COMPANY_ID}/heartbeat-runs/latest-failed`));
-
-    expect(res.status).toBe(403);
-    expect(mockHeartbeatService.latestFailed).not.toHaveBeenCalled();
-  });
-
-  it("rejects heartbeat run listing with limit below the allowed range", async () => {
-    mockHeartbeatService.list.mockResolvedValue([]);
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: [companyId],
-    });
-
-    const res = await requestApp(app, (baseUrl) =>
-      request(baseUrl).get(`/api/companies/${companyId}/heartbeat-runs?limit=0`));
-
-    expect(res.status).toBe(400);
-    expect(mockHeartbeatService.list).not.toHaveBeenCalled();
-  });
-
-  it("rejects heartbeat run listing with limit above the allowed range", async () => {
-    mockHeartbeatService.list.mockResolvedValue([]);
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: [companyId],
-    });
-
-    const res = await requestApp(app, (baseUrl) =>
-      request(baseUrl).get(`/api/companies/${companyId}/heartbeat-runs?limit=2000`));
-
-    expect(res.status).toBe(400);
-    expect(mockHeartbeatService.list).not.toHaveBeenCalled();
-  });
-
-  it("rejects heartbeat run listing with a negative offset", async () => {
-    mockHeartbeatService.list.mockResolvedValue([]);
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: [companyId],
-    });
-
-    const res = await requestApp(app, (baseUrl) =>
-      request(baseUrl).get(`/api/companies/${companyId}/heartbeat-runs?offset=-1`));
-
-    expect(res.status).toBe(400);
-    expect(mockHeartbeatService.list).not.toHaveBeenCalled();
   });
 });

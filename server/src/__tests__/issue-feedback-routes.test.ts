@@ -52,7 +52,6 @@ const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 const mockIssueThreadInteractionService = vi.hoisted(() => ({
   expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
   expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
-      cancelPendingOnIssueClose: vi.fn(async () => undefined),
 }));
 const mockEnvironmentService = vi.hoisted(() => ({
   getById: vi.fn(async () => null),

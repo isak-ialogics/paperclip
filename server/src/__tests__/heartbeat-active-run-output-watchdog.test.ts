@@ -73,6 +73,31 @@ if (!embeddedPostgresSupport.supported) {
   );
 }
 
+function errorHasPostgresCode(error: unknown, code: string): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object") return false;
+    const record = current as { code?: unknown; cause?: unknown };
+    if (record.code === code) return true;
+    current = record.cause;
+  }
+  return false;
+}
+
+async function truncateCompaniesWithDeadlockRetry(db: ReturnType<typeof createDb>) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await db.execute(sql.raw(`TRUNCATE TABLE "companies" CASCADE`));
+      return;
+    } catch (error) {
+      if (!errorHasPostgresCode(error, "40P01") || attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}
+
 describeEmbeddedPostgres("active-run output watchdog", () => {
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
   let db: ReturnType<typeof createDb>;
@@ -91,7 +116,7 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
       if (activeRuns.length === 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    await db.execute(sql.raw(`TRUNCATE TABLE "companies" CASCADE`));
+    await truncateCompaniesWithDeadlockRetry(db);
   });
 
   afterAll(async () => {
@@ -367,9 +392,9 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
     expect(event?.message).toContain("Source-resolved watchdog fold");
   });
 
-  it("skips terminal source issues without same-run terminal evidence and emits an orphan-run detection", async () => {
+  it("still escalates terminal source issues without same-run terminal evidence", async () => {
     const now = new Date("2026-04-22T20:00:00.000Z");
-    const { companyId, issueId, runId } = await seedRunningRun({
+    const { companyId, runId } = await seedRunningRun({
       now,
       ageMs: ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS + 60_000,
       sourceStatus: "done",
@@ -378,84 +403,18 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
 
     const result = await heartbeat.scanSilentActiveRuns({ now, companyId });
 
-    expect(result).toMatchObject({ created: 0, folded: 0, skipped: 1 });
-    const evaluations = await db
+    expect(result).toMatchObject({ created: 1, folded: 0 });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(run?.status).toBe("running");
+    const [evaluation] = await db
       .select()
       .from(issues)
       .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stale_active_run_evaluation")));
-    expect(evaluations).toHaveLength(0);
-
-    const [detection] = await db
-      .select()
-      .from(activityLog)
-      .where(
-        and(
-          eq(activityLog.companyId, companyId),
-          eq(activityLog.action, "heartbeat.output_stale_orphan_run_detected"),
-        ),
-      );
-    expect(detection).toBeTruthy();
-    expect(detection?.details).toMatchObject({
-      sourceIssueId: issueId,
-      sourceIssueStatus: "done",
-      runId,
-      reason: "terminal_source_no_same_run_evidence",
-    });
+    expect(evaluation?.originId).toBe(runId);
+    expect(evaluation?.parentId).toBeNull();
   });
 
-  it("skips silent-run evaluation creation when a prior evaluation for the same run was already disposed", async () => {
-    const now = new Date("2026-04-22T20:00:00.000Z");
-    const { companyId, managerId, runId, issuePrefix } = await seedRunningRun({
-      now,
-      ageMs: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS + 60_000,
-    });
-    const priorEvaluationId = randomUUID();
-    await db.insert(issues).values({
-      id: priorEvaluationId,
-      companyId,
-      title: "Prior silent-run evaluation already closed",
-      status: "done",
-      priority: "medium",
-      assigneeAgentId: managerId,
-      issueNumber: 2,
-      identifier: `${issuePrefix}-2`,
-      originKind: "stale_active_run_evaluation",
-      originId: runId,
-      originRunId: runId,
-      originFingerprint: `stale_active_run:${companyId}:${runId}`,
-      completedAt: new Date(now.getTime() - 30 * 60 * 1000),
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.scanSilentActiveRuns({ now, companyId });
-
-    expect(result).toMatchObject({ created: 0, existing: 0, skipped: 1 });
-    const evaluations = await db
-      .select()
-      .from(issues)
-      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stale_active_run_evaluation")));
-    expect(evaluations).toHaveLength(1);
-    expect(evaluations[0]?.id).toBe(priorEvaluationId);
-
-    const [dedup] = await db
-      .select()
-      .from(activityLog)
-      .where(
-        and(
-          eq(activityLog.companyId, companyId),
-          eq(activityLog.action, "heartbeat.output_stale_dedup_skipped"),
-        ),
-      );
-    expect(dedup).toBeTruthy();
-    expect(dedup?.details).toMatchObject({
-      priorEvaluationIssueId: priorEvaluationId,
-      priorEvaluationStatus: "done",
-      runId,
-      reason: "prior_evaluation_terminal",
-    });
-  });
-
-  it("skips with orphan-run detection when a same-run comment is followed by another actor marking the source done", async () => {
+  it("still escalates when a same-run comment is followed by another actor marking the source done", async () => {
     const now = new Date("2026-04-22T20:00:00.000Z");
     const { companyId, issueId, runId, issuePrefix } = await seedRunningRun({
       now,
@@ -488,28 +447,15 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
 
     const result = await heartbeat.scanSilentActiveRuns({ now, companyId });
 
-    expect(result).toMatchObject({ created: 0, folded: 0, skipped: 1 });
-    const evaluations = await db
+    expect(result).toMatchObject({ created: 1, folded: 0 });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(run?.status).toBe("running");
+    const [evaluation] = await db
       .select()
       .from(issues)
       .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stale_active_run_evaluation")));
-    expect(evaluations).toHaveLength(0);
-
-    const [detection] = await db
-      .select()
-      .from(activityLog)
-      .where(
-        and(
-          eq(activityLog.companyId, companyId),
-          eq(activityLog.action, "heartbeat.output_stale_orphan_run_detected"),
-        ),
-      );
-    expect(detection?.details).toMatchObject({
-      sourceIssueId: issueId,
-      sourceIssueStatus: "done",
-      runId,
-      reason: "terminal_source_no_same_run_evidence",
-    });
+    expect(evaluation?.originId).toBe(runId);
+    expect(evaluation?.parentId).toBeNull();
   });
 
   it("folds existing evaluation and active watchdog recovery action idempotently", async () => {
@@ -580,81 +526,6 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
       .from(heartbeatRunWatchdogDecisions)
       .where(eq(heartbeatRunWatchdogDecisions.runId, runId));
     expect(decisions).toHaveLength(1);
-  });
-
-  it("emits CTO escalation and skips evaluation creation when source issue already has a prior stale evaluation", async () => {
-    const now = new Date("2026-04-22T20:00:00.000Z");
-    const { companyId, managerId, issueId, runId, issuePrefix } = await seedRunningRun({
-      now,
-      ageMs: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS + 60_000,
-    });
-    const priorEvaluationId = randomUUID();
-    await db.insert(issues).values({
-      id: priorEvaluationId,
-      companyId,
-      title: "Prior silent-run evaluation (closed)",
-      status: "done",
-      priority: "medium",
-      assigneeAgentId: managerId,
-      issueNumber: 2,
-      identifier: `${issuePrefix}-2`,
-      parentId: issueId,
-      originKind: "stale_active_run_evaluation",
-      originId: randomUUID(),
-      originRunId: randomUUID(),
-      originFingerprint: `stale_active_run:${companyId}:prior-run-id`,
-      completedAt: new Date(now.getTime() - 60 * 60 * 1000),
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.scanSilentActiveRuns({ now, companyId });
-
-    expect(result).toMatchObject({ created: 0, skipped: 1 });
-    const newEvaluations = await db
-      .select()
-      .from(issues)
-      .where(
-        and(
-          eq(issues.companyId, companyId),
-          eq(issues.originKind, "stale_active_run_evaluation"),
-          sql`${issues.id} != ${priorEvaluationId}`,
-        ),
-      );
-    expect(newEvaluations).toHaveLength(0);
-
-    const [capLog] = await db
-      .select()
-      .from(activityLog)
-      .where(
-        and(
-          eq(activityLog.companyId, companyId),
-          eq(activityLog.action, "heartbeat.output_stale_cap_exceeded"),
-        ),
-      );
-    expect(capLog).toBeTruthy();
-    expect(capLog?.details).toMatchObject({
-      sourceIssueId: issueId,
-      priorEvalCount: 1,
-      reason: "source_issue_evaluation_cap_exceeded",
-    });
-
-    const escalations = await db
-      .select()
-      .from(issues)
-      .where(
-        and(
-          eq(issues.companyId, companyId),
-          eq(issues.parentId, issueId),
-          sql`${issues.id} != ${priorEvaluationId}`,
-        ),
-      );
-    expect(escalations).toHaveLength(1);
-    expect(escalations[0]).toMatchObject({
-      priority: "high",
-      assigneeAgentId: managerId,
-      originId: runId,
-    });
-    expect(escalations[0]?.description).toContain("Rule-2 Escalation Packet");
   });
 
   it("refuses recovery-on-recovery stale-run recursion", async () => {

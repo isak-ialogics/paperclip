@@ -43,6 +43,7 @@ import { fileURLToPath } from "node:url";
 import type {
   AskUserQuestionsInteraction,
   PaperclipPluginManifestV1,
+  RequestCheckboxConfirmationInteraction,
   RequestConfirmationInteraction,
   SuggestTasksInteraction,
 } from "@paperclipai/shared";
@@ -89,8 +90,6 @@ import type {
   PluginEnvironmentResumeLeaseParams,
   PluginEnvironmentValidateConfigParams,
   PluginEnvironmentProbeParams,
-  ResolveRunContextParams,
-  ResolveRunContextResult,
   PluginInvocationContext,
   WorkerToHostMethodName,
   WorkerToHostMethods,
@@ -915,6 +914,23 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           }) as Promise<RequestConfirmationInteraction>;
         },
 
+        async requestCheckboxConfirmation(
+          issueId: string,
+          interaction,
+          companyId: string,
+          options?: { authorAgentId?: string },
+        ): Promise<RequestCheckboxConfirmationInteraction> {
+          return callHost("issues.createInteraction", {
+            issueId,
+            companyId,
+            interaction: {
+              ...interaction,
+              kind: "request_checkbox_confirmation",
+            },
+            authorAgentId: options?.authorAgentId,
+          }) as Promise<RequestCheckboxConfirmationInteraction>;
+        },
+
         documents: {
           async list(issueId: string, companyId: string) {
             return callHost("issues.documents.list", { issueId, companyId });
@@ -1360,9 +1376,6 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
       case "environmentExecute":
         return handleEnvironmentExecute(params as PluginEnvironmentExecuteParams);
 
-      case "resolveRunContext":
-        return handleResolveRunContext(params as ResolveRunContextParams);
-
       default:
         throw Object.assign(
           new Error(`Unknown method: ${method}`),
@@ -1404,7 +1417,6 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
     if (plugin.definition.onEnvironmentDestroyLease) supportedMethods.push("environmentDestroyLease");
     if (plugin.definition.onEnvironmentRealizeWorkspace) supportedMethods.push("environmentRealizeWorkspace");
     if (plugin.definition.onEnvironmentExecute) supportedMethods.push("environmentExecute");
-    if (plugin.definition.onResolveRunContext) supportedMethods.push("resolveRunContext");
 
     return { ok: true, supportedMethods };
   }
@@ -1639,13 +1651,6 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
       throw methodNotImplemented("environmentExecute");
     }
     return plugin.definition.onEnvironmentExecute(params);
-  }
-
-  async function handleResolveRunContext(params: ResolveRunContextParams): Promise<ResolveRunContextResult> {
-    if (!plugin.definition.onResolveRunContext) {
-      throw methodNotImplemented("resolveRunContext");
-    }
-    return plugin.definition.onResolveRunContext(params);
   }
 
   // -----------------------------------------------------------------------

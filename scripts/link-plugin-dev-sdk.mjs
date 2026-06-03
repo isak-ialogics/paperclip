@@ -30,11 +30,6 @@ try {
 }
 
 const relativeSdkDir = relative(scopeDir, sdkDir);
-try {
-  symlinkSync(relativeSdkDir, linkTarget, "dir");
-} catch (err) {
-  if (/** @type {NodeJS.ErrnoException} */ (err).code !== "EEXIST") throw err;
-  // Parallel postinstall already created the link — that's fine
-}
+symlinkSync(relativeSdkDir, linkTarget, "dir");
 
 console.log(`  ✓ Linked local @paperclipai/plugin-sdk for ${packageDir}`);

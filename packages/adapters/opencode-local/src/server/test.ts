@@ -125,10 +125,7 @@ export async function testEnvironment(
   }
 
   // Prevent OpenCode from writing an opencode.json into the working directory.
-  // Honor explicit operator override via adapterConfig.env (GH#7290).
-  if (!("OPENCODE_DISABLE_PROJECT_CONFIG" in envConfig)) {
-    env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
-  }
+  env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";

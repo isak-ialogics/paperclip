@@ -5,7 +5,6 @@ import { pinoHttp } from "pino-http";
 import { readConfigFile } from "../config-file.js";
 import { resolveDefaultLogsDir, resolveHomeAwarePath } from "../home-paths.js";
 import { shouldSilenceHttpSuccessLog } from "./http-log-policy.js";
-import { createLoggerRedactionOptions } from "./logger-redaction.js";
 
 function resolveServerLogDir(): string {
   const envOverride = process.env.PAPERCLIP_LOG_DIR?.trim();
@@ -30,7 +29,7 @@ const sharedOpts = {
 
 export const logger = pino({
   level: "debug",
-  ...createLoggerRedactionOptions(),
+  redact: ["req.headers.authorization"],
 }, pino.transport({
   targets: [
     {

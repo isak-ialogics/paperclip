@@ -1,6 +1,7 @@
-import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { execFile, spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +38,7 @@ import {
   stopRuntimeServicesForExecutionWorkspace,
   type RealizedExecutionWorkspace,
 } from "../services/workspace-runtime.ts";
-import { writeLocalServiceRegistryRecord } from "../services/local-service-supervisor.ts";
+import { readLocalServicePortOwner, writeLocalServiceRegistryRecord } from "../services/local-service-supervisor.ts";
 import { resolvePaperclipConfigPath } from "../paths.ts";
 import type { WorkspaceOperation } from "@paperclipai/shared";
 import type { WorkspaceOperationRecorder } from "../services/workspace-operations.ts";
@@ -47,6 +48,17 @@ import {
 } from "./helpers/embedded-postgres.js";
 
 const execFileAsync = promisify(execFile);
+
+function stableStringifyForTest(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringifyForTest(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const rec = value as Record<string, unknown>;
+    return `{${Object.keys(rec).sort().map((key) => `${JSON.stringify(key)}:${stableStringifyForTest(rec[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 const leasedRunIds = new Set<string>();
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -2915,6 +2927,34 @@ describe("resolveShell (shell fallback)", () => {
   });
 });
 
+describe("readLocalServicePortOwner", () => {
+  it("detects the owner of a listening TCP port", async () => {
+    try {
+      await execFileAsync("lsof", ["-v"]);
+    } catch {
+      return;
+    }
+
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : null;
+      expect(port).toBeTypeOf("number");
+
+      const owner = await readLocalServicePortOwner(port!);
+      expect(owner).toBe(process.pid);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
+  });
+});
+
 describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
@@ -3024,6 +3064,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
     expect(service?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     await expect(fetch(service!.url!)).resolves.toMatchObject({ ok: true });
 
+    await fs.rm(paperclipHome, { recursive: true, force: true });
     await resetRuntimeServicesForTests();
 
     const result = await reconcilePersistedRuntimeServicesOnStartup(db);
@@ -3045,6 +3086,224 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
 
     await expect(fetch(service!.url!)).rejects.toThrow();
   });
+
+  it("does not reuse a stopped auto-port service port while another process owns it", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-unhealthy-adopt-"));
+    const paperclipHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-home-"));
+    process.env.PAPERCLIP_HOME = paperclipHome;
+    process.env.PAPERCLIP_INSTANCE_ID = `runtime-unhealthy-adopt-${randomUUID()}`;
+
+    const portProbe = net.createServer();
+    await new Promise<void>((resolve) => portProbe.listen(0, "127.0.0.1", resolve));
+    const address = portProbe.address();
+    const stalePort = typeof address === "object" && address ? address.port : null;
+    await new Promise<void>((resolve, reject) => {
+      portProbe.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(stalePort).toBeTypeOf("number");
+
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const projectId = randomUUID();
+    const runId = randomUUID();
+    const executionWorkspaceId = randomUUID();
+    const stoppedServiceId = randomUUID();
+    const serviceCommand =
+      "node -e \"const http=require('node:http'); const stale=process.env.STALE_HEALTH==='1'; http.createServer((req,res)=>{ if (req.url==='/api/health' && stale) { res.statusCode=503; res.end('database_unreachable'); return; } res.end('ok'); }).listen(Number(process.env.PORT), '127.0.0.1')\"";
+    const scopeType = "agent";
+    const scopeId = agentId;
+    const reuseKey = createHash("sha256")
+      .update(
+        stableStringifyForTest({
+          scopeType,
+          scopeId,
+          serviceName: "paperclip-dev",
+          command: serviceCommand,
+          cwd: workspaceRoot,
+          port: null,
+          env: {},
+        }),
+      )
+      .digest("hex");
+
+    const staleProcess = spawn(resolveShell(), ["-lc", serviceCommand], {
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        PORT: String(stalePort),
+        STALE_HEALTH: "1",
+      },
+      detached: process.platform !== "win32",
+      stdio: "ignore",
+    });
+    staleProcess.unref();
+
+    try {
+      const rootUrl = `http://127.0.0.1:${stalePort}`;
+      const healthUrl = `${rootUrl}/api/health`;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        try {
+          const response = await fetch(rootUrl);
+          if (response.ok) break;
+        } catch {
+          // Keep polling until the stale process has bound its port.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      await expect(fetch(rootUrl)).resolves.toMatchObject({ ok: true });
+      await expect(fetch(healthUrl)).resolves.toMatchObject({ ok: false, status: 503 });
+
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(agents).values({
+        id: agentId,
+        companyId,
+        name: "Codex Coder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      });
+      await db.insert(heartbeatRuns).values({
+        id: runId,
+        companyId,
+        agentId,
+        invocationSource: "manual",
+        status: "running",
+        startedAt: new Date(),
+        updatedAt: new Date(),
+      });
+      await db.insert(projects).values({
+        id: projectId,
+        companyId,
+        name: "Runtime unhealthy adoption test",
+        status: "in_progress",
+      });
+      await db.insert(executionWorkspaces).values({
+        id: executionWorkspaceId,
+        companyId,
+        projectId,
+        projectWorkspaceId: null,
+        mode: "isolated_workspace",
+        strategyType: "git_worktree",
+        name: "Runtime unhealthy adoption",
+        status: "active",
+        cwd: workspaceRoot,
+        providerType: "git_worktree",
+        providerRef: workspaceRoot,
+      });
+      await db.insert(workspaceRuntimeServices).values({
+        id: stoppedServiceId,
+        companyId,
+        projectId,
+        projectWorkspaceId: null,
+        executionWorkspaceId,
+        issueId: null,
+        scopeType,
+        scopeId,
+        serviceName: "paperclip-dev",
+        status: "stopped",
+        lifecycle: "shared",
+        reuseKey,
+        command: serviceCommand,
+        cwd: workspaceRoot,
+        port: stalePort,
+        url: rootUrl,
+        provider: "local_process",
+        providerRef: String(staleProcess.pid ?? ""),
+        ownerAgentId: null,
+        startedByRunId: null,
+        lastUsedAt: new Date(),
+        startedAt: new Date(),
+        stoppedAt: new Date(),
+        stopPolicy: { type: "manual" },
+        healthStatus: "unknown",
+      });
+
+      leasedRunIds.add(runId);
+      const services = await ensureRuntimeServicesForRun({
+        db,
+        runId,
+        agent: {
+          id: agentId,
+          name: "Codex Coder",
+          companyId,
+        },
+        issue: null,
+        workspace: {
+          ...buildWorkspace(workspaceRoot),
+          projectId,
+          workspaceId: null,
+        },
+        executionWorkspaceId,
+        config: {
+          workspaceRuntime: {
+            services: [
+              {
+                name: "paperclip-dev",
+                command: serviceCommand,
+                cwd: ".",
+                port: { type: "auto" },
+                readiness: {
+                  type: "http",
+                  urlTemplate: "http://127.0.0.1:{{port}}",
+                  timeoutSec: 10,
+                  intervalMs: 100,
+                },
+                expose: {
+                  type: "url",
+                  urlTemplate: "http://127.0.0.1:{{port}}",
+                },
+                lifecycle: "shared",
+                reuseScope: "agent",
+                stopPolicy: {
+                  type: "manual",
+                },
+              },
+            ],
+          },
+        },
+        adapterEnv: {},
+      });
+
+      expect(services).toHaveLength(1);
+      expect(services[0]?.reused).toBe(false);
+      expect(services[0]?.id).toBe(stoppedServiceId);
+      expect(services[0]?.port).not.toBe(stalePort);
+      expect(services[0]?.url).not.toBe(rootUrl);
+      await expect(fetch(services[0]!.url!)).resolves.toMatchObject({ ok: true });
+      await expect(fetch(healthUrl)).resolves.toMatchObject({ ok: false, status: 503 });
+      expect(await readLocalServicePortOwner(stalePort!)).toBe(staleProcess.pid);
+    } finally {
+      leasedRunIds.delete(runId);
+      await releaseRuntimeServicesForRun(runId);
+      await stopRuntimeServicesForExecutionWorkspace({
+        db,
+        executionWorkspaceId,
+        workspaceCwd: workspaceRoot,
+      });
+      if (staleProcess.pid) {
+        try {
+          process.kill(-staleProcess.pid, "SIGKILL");
+        } catch {
+          try {
+            process.kill(staleProcess.pid, "SIGKILL");
+          } catch {
+            // Ignore cleanup races.
+          }
+        }
+      }
+    }
+  }, 20_000);
 
   it("marks persisted local services stopped when the registry pid is stale", async () => {
     const companyId = randomUUID();
@@ -3480,245 +3739,5 @@ describe("normalizeAdapterManagedRuntimeServices", () => {
       scopeId: "execution-workspace-1",
       executionWorkspaceId: "execution-workspace-1",
     });
-  });
-});
-
-describeEmbeddedPostgres("runProjectWorkspaceSetupCommand (via realizeExecutionWorkspace)", () => {
-  let db!: ReturnType<typeof createDb>;
-  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
-  let companyId!: string;
-  let projectId!: string;
-
-  beforeAll(async () => {
-    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-setup-command-");
-    db = createDb(tempDb.connectionString);
-  }, 20_000);
-
-  afterAll(async () => {
-    await tempDb?.cleanup();
-  });
-
-  afterEach(async () => {
-    await db.delete(projectWorkspaces);
-    await db.delete(projects);
-    await db.delete(companies);
-  });
-
-  async function setupCompanyAndProject() {
-    companyId = randomUUID();
-    projectId = randomUUID();
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Test Company",
-      issuePrefix: `TC${companyId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(projects).values({
-      id: projectId,
-      companyId,
-      name: "Test Project",
-      status: "in_progress",
-    });
-  }
-
-  it("fires when setup_command is set on the project workspace", async () => {
-    await setupCompanyAndProject();
-    const repoRoot = await createTempRepo();
-    const workspaceId = randomUUID();
-    const markerFile = path.join(repoRoot, "setup-ran.txt");
-
-    await db.insert(projectWorkspaces).values({
-      id: workspaceId,
-      companyId,
-      projectId,
-      name: "default",
-      sourceType: "local_path",
-      cwd: repoRoot,
-      isPrimary: false,
-      setupCommand: `printf 'setup ok' > ${markerFile}`,
-    });
-
-    await realizeExecutionWorkspace({
-      db,
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId,
-        workspaceId,
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: { workspaceStrategy: { type: "git_worktree", branchTemplate: "{{issue.identifier}}-{{slug}}" } },
-      issue: { id: "issue-1", identifier: "PAP-1", title: "test" },
-      agent: { id: "agent-1", name: "Test Agent", companyId },
-    });
-
-    await expect(fs.readFile(markerFile, "utf8")).resolves.toBe("setup ok");
-  });
-
-  it("is a no-op when setup_command is null on the project workspace", async () => {
-    await setupCompanyAndProject();
-    const repoRoot = await createTempRepo();
-    const workspaceId = randomUUID();
-    const markerFile = path.join(repoRoot, "setup-ran.txt");
-
-    await db.insert(projectWorkspaces).values({
-      id: workspaceId,
-      companyId,
-      projectId,
-      name: "default",
-      sourceType: "local_path",
-      cwd: repoRoot,
-      isPrimary: false,
-    });
-
-    await realizeExecutionWorkspace({
-      db,
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId,
-        workspaceId,
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: { workspaceStrategy: { type: "git_worktree", branchTemplate: "{{issue.identifier}}-{{slug}}" } },
-      issue: { id: "issue-1", identifier: "PAP-2", title: "test" },
-      agent: { id: "agent-1", name: "Test Agent", companyId },
-    });
-
-    await expect(fs.stat(markerFile)).rejects.toThrow();
-  });
-
-  it("is a no-op when db is not provided", async () => {
-    const repoRoot = await createTempRepo();
-    const markerFile = path.join(repoRoot, "setup-ran.txt");
-
-    const result = await realizeExecutionWorkspace({
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId: "project-1",
-        workspaceId: "workspace-1",
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: { workspaceStrategy: { type: "git_worktree", branchTemplate: "{{issue.identifier}}-{{slug}}" } },
-      issue: { id: "issue-1", identifier: "PAP-3", title: "test" },
-      agent: { id: "agent-1", name: "Test Agent", companyId: "company-1" },
-    });
-
-    expect(result.warnings).toHaveLength(0);
-    await expect(fs.stat(markerFile)).rejects.toThrow();
-  });
-
-  it("fails open on non-zero exit: run proceeds and warning is returned", async () => {
-    await setupCompanyAndProject();
-    const repoRoot = await createTempRepo();
-    const workspaceId = randomUUID();
-
-    await db.insert(projectWorkspaces).values({
-      id: workspaceId,
-      companyId,
-      projectId,
-      name: "default",
-      sourceType: "local_path",
-      cwd: repoRoot,
-      isPrimary: false,
-      setupCommand: "exit 1",
-    });
-
-    const result = await realizeExecutionWorkspace({
-      db,
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId,
-        workspaceId,
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: { workspaceStrategy: { type: "git_worktree", branchTemplate: "{{issue.identifier}}-{{slug}}" } },
-      issue: { id: "issue-1", identifier: "PAP-4", title: "test" },
-      agent: { id: "agent-1", name: "Test Agent", companyId },
-    });
-
-    expect(result.worktreePath).toBeTruthy();
-    expect(result.warnings.some((w) => w.includes("setup command failed"))).toBe(true);
-  });
-
-  it("records a workspace_setup phase in the operation recorder", async () => {
-    await setupCompanyAndProject();
-    const repoRoot = await createTempRepo();
-    const workspaceId = randomUUID();
-    const { recorder, operations } = createWorkspaceOperationRecorderDouble();
-
-    await db.insert(projectWorkspaces).values({
-      id: workspaceId,
-      companyId,
-      projectId,
-      name: "default",
-      sourceType: "local_path",
-      cwd: repoRoot,
-      isPrimary: false,
-      setupCommand: "printf 'ok'",
-    });
-
-    await realizeExecutionWorkspace({
-      db,
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId,
-        workspaceId,
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: { workspaceStrategy: { type: "git_worktree", branchTemplate: "{{issue.identifier}}-{{slug}}" } },
-      issue: { id: "issue-1", identifier: "PAP-5", title: "test" },
-      agent: { id: "agent-1", name: "Test Agent", companyId },
-      recorder,
-    });
-
-    expect(operations.some((op) => op.phase === "workspace_setup")).toBe(true);
-    const setupOp = operations.find((op) => op.phase === "workspace_setup");
-    expect(setupOp?.command).toBe("printf 'ok'");
-    expect(setupOp?.result.status).toBe("succeeded");
-  });
-
-  it("exposes PAPERCLIP_WORKSPACE_BASE_CWD in the setup command environment", async () => {
-    await setupCompanyAndProject();
-    const repoRoot = await createTempRepo();
-    const workspaceId = randomUUID();
-    const envFile = path.join(repoRoot, "env-dump.txt");
-
-    await db.insert(projectWorkspaces).values({
-      id: workspaceId,
-      companyId,
-      projectId,
-      name: "default",
-      sourceType: "local_path",
-      cwd: repoRoot,
-      isPrimary: false,
-      setupCommand: `printf '%s' "$PAPERCLIP_WORKSPACE_BASE_CWD" > ${envFile}`,
-    });
-
-    await realizeExecutionWorkspace({
-      db,
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId,
-        workspaceId,
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: { workspaceStrategy: { type: "git_worktree", branchTemplate: "{{issue.identifier}}-{{slug}}" } },
-      issue: { id: "issue-1", identifier: "PAP-6", title: "test" },
-      agent: { id: "agent-1", name: "Test Agent", companyId },
-    });
-
-    const written = await fs.readFile(envFile, "utf8");
-    expect(written).toBe(repoRoot);
   });
 });

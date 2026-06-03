@@ -1,1 +1,0 @@
-CREATE INDEX "routines_company_parent_issue_status_idx" ON "routines" USING btree ("company_id","parent_issue_id","status");

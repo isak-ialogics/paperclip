@@ -103,6 +103,7 @@ import {
   ListTree,
 } from "lucide-react";
 
+const INBOX_HEARTBEAT_RUN_LIMIT = 200;
 const INBOX_ISSUE_LIST_LIMIT = 500;
 import { Input } from "@/components/ui/input";
 import { PageTabBar } from "../components/PageTabBar";
@@ -120,6 +121,7 @@ import {
   getInboxKeyboardSelectionIndex,
   getInboxWorkItems,
   getInboxSearchSupplementIssues,
+  getLatestFailedRunsByAgent,
   matchesInboxIssueSearch,
   getRecentTouchedIssues,
   isInboxEntityDismissed,
@@ -831,9 +833,9 @@ export function Inbox() {
     enabled: !!selectedCompanyId,
   });
 
-  const { data: latestFailedRuns, isLoading: isRunsLoading } = useQuery({
-    queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "latest-failed"],
-    queryFn: () => heartbeatsApi.latestFailed(selectedCompanyId!),
+  const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
+    queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "limit", INBOX_HEARTBEAT_RUN_LIMIT],
+    queryFn: () => heartbeatsApi.list(selectedCompanyId!, undefined, INBOX_HEARTBEAT_RUN_LIMIT),
     enabled: !!selectedCompanyId,
   });
   const { data: liveRuns } = useQuery({
@@ -1033,10 +1035,10 @@ export function Inbox() {
 
   const failedRuns = useMemo(
     () =>
-      (latestFailedRuns ?? []).filter(
+      getLatestFailedRunsByAgent(heartbeatRuns ?? []).filter(
         (r) => !isInboxEntityDismissed(dismissedAtByKey, `run:${r.id}`, r.createdAt),
       ),
-    [latestFailedRuns, dismissedAtByKey],
+    [heartbeatRuns, dismissedAtByKey],
   );
   const approvalsToRender = useMemo(() => {
     let filtered = getApprovalsForTab(approvals ?? [], tab, allApprovalFilter, currentUserId);
@@ -1493,7 +1495,7 @@ export function Inbox() {
       return { previousData };
     },
     onError: (err, id, context) => {
-      setActionError(err instanceof Error ? err.message : "Failed to archive issue");
+      setActionError(err instanceof Error ? err.message : "Failed to archive task");
       setArchivingIssueIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -2206,7 +2208,7 @@ export function Inbox() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="everything">All categories</SelectItem>
-              <SelectItem value="issues_i_touched">My recent issues</SelectItem>
+              <SelectItem value="issues_i_touched">My recent tasks</SelectItem>
               <SelectItem value="join_requests">Join requests</SelectItem>
               <SelectItem value="approvals">Approvals</SelectItem>
               <SelectItem value="failed_runs">Failed runs</SelectItem>
@@ -2452,8 +2454,8 @@ export function Inbox() {
                               variant="ghost"
                               size="icon-xs"
                               className="-mr-2 text-muted-foreground"
-                              title={`New issue in ${group.label}`}
-                              aria-label={`New issue in ${group.label}`}
+                              title={`New task in ${group.label}`}
+                              aria-label={`New task in ${group.label}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openCreateIssueForGroup(group);
