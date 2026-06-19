@@ -4979,6 +4979,27 @@ export function issueRoutes(
       actor.actorType,
     );
     await assertCanManageIssueMonitor(access, req, companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
+
+    // Idempotency: if an existing non-cancelled issue shares this key, return it instead of creating a duplicate.
+    if (createBody.idempotencyKey) {
+      const [existing] = await db
+        .select({ id: issueRows.id })
+        .from(issueRows)
+        .where(
+          and(
+            eq(issueRows.companyId, companyId),
+            eq(issueRows.idempotencyKey, createBody.idempotencyKey),
+            notInArray(issueRows.status, ["cancelled"]),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        const full = await svc.getById(existing.id);
+        res.json(full);
+        return;
+      }
+    }
+
     const issueId = randomUUID();
     const sourceTrust = await sourceTrustForActorWrite({
       id: issueId,
