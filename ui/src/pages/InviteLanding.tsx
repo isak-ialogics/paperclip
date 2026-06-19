@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AGENT_ADAPTER_TYPES } from "@paperclipai/shared";
 import type { AgentAdapterType, JoinRequest } from "@paperclipai/shared";
@@ -228,6 +228,7 @@ export function InviteLandingPage() {
   const [result, setResult] = useState<{ kind: "bootstrap" | "join"; payload: unknown } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authFeedback, setAuthFeedback] = useState<AuthFeedback | null>(null);
+  const [errorAlertId, setErrorAlertId] = useState<string | null>(null);
   const [autoAcceptStarted, setAutoAcceptStarted] = useState(false);
 
   const healthQuery = useQuery({
@@ -371,6 +372,7 @@ export function InviteLandingPage() {
     },
     onSuccess: async () => {
       setAuthFeedback(null);
+      setErrorAlertId(null);
       rememberPendingInviteToken(token);
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
       await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
@@ -402,6 +404,7 @@ export function InviteLandingPage() {
         setAuthMode("sign_in");
         setPassword("");
       }
+      setErrorAlertId(`invite-auth-error-${Date.now()}`);
       setAuthFeedback(nextFeedback);
     },
   });
@@ -710,6 +713,8 @@ export function InviteLandingPage() {
                       <span className="mb-1 block text-zinc-400">Name</span>
                       <input
                         name="name"
+                        id="invite-name"
+                        required
                         className={fieldClassName}
                         value={name}
                         onChange={(event) => {
@@ -725,6 +730,8 @@ export function InviteLandingPage() {
                     <span className="mb-1 block text-zinc-400">Email</span>
                     <input
                       name="email"
+                      id="invite-email"
+                      required
                       type="email"
                       className={fieldClassName}
                       value={email}
@@ -732,14 +739,19 @@ export function InviteLandingPage() {
                         setEmail(event.target.value);
                         setAuthFeedback(null);
                       }}
-                      autoComplete="email"
+                      autoComplete={authMode === "sign_up" ? "username" : "email"}
                       autoFocus={authMode === "sign_in"}
+                      aria-required="true"
+                      aria-describedby={errorAlertId ?? undefined}
+                      aria-invalid={errorAlertId ? "true" : undefined}
                     />
                   </label>
                   <label className="block text-sm">
                     <span className="mb-1 block text-zinc-400">Password</span>
                     <input
                       name="password"
+                      id="invite-password"
+                      required
                       type="password"
                       className={fieldClassName}
                       value={password}
@@ -748,16 +760,21 @@ export function InviteLandingPage() {
                         setAuthFeedback(null);
                       }}
                       autoComplete={authMode === "sign_in" ? "current-password" : "new-password"}
+                      aria-required="true"
+                      aria-describedby={errorAlertId ?? undefined}
+                      aria-invalid={errorAlertId ? "true" : undefined}
                     />
                   </label>
-                  {authFeedback ? (
-                    <p
+                  {authFeedback && errorAlertId ? (
+                    <div
+                      id={errorAlertId}
+                      role="alert"
                       className={`text-xs ${
                         authFeedback.tone === "info" ? "text-amber-300" : "text-red-400"
                       }`}
                     >
                       {authFeedback.message}
-                    </p>
+                    </div>
                   ) : null}
                   <Button
                     type="submit"
