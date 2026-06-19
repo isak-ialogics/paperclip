@@ -1434,6 +1434,65 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
+  describe("manager chain issue:mutate grant", () => {
+    function managerDecide() {
+      mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+        allowed: input.action === "issue:mutate" || input.action === "tasks:manage_active_checkouts" || input.action === "issue:read" || input.action === "company_scope:read",
+        action: input.action,
+        reason:
+          input.action === "issue:mutate" || input.action === "tasks:manage_active_checkouts"
+            ? "allow_manager_chain"
+            : input.action === "issue:read" || input.action === "company_scope:read"
+              ? "allow_explicit_grant"
+              : "deny_missing_grant",
+        explanation:
+          input.action === "issue:mutate" || input.action === "tasks:manage_active_checkouts"
+            ? "Allowed because the actor manages the issue assignee in the reporting chain."
+            : input.action === "issue:read" || input.action === "company_scope:read"
+              ? "Allowed by test default."
+              : "Missing permission.",
+      }));
+    }
+
+    function peerOnlyDecide() {
+      mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+        allowed: input.action === "issue:read" || input.action === "company_scope:read",
+        action: input.action,
+        reason: input.action === "issue:read" || input.action === "company_scope:read" ? "allow_explicit_grant" : "deny_missing_grant",
+        explanation: input.action === "issue:read" || input.action === "company_scope:read" ? "Allowed by test default." : "Missing permission.",
+      }));
+    }
+
+    it("allows a manager agent to PATCH priority on a subordinate's todo issue", async () => {
+      mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo", assigneeAgentId: ownerAgentId }));
+      mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+        ...makeIssue({ status: "todo", assigneeAgentId: ownerAgentId }),
+        ...patch,
+      }));
+      managerDecide();
+
+      const res = await request(await createApp(peerActor()))
+        .patch(`/api/issues/${issueId}`)
+        .send({ priority: "low" });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(mockIssueService.update).toHaveBeenCalledWith(issueId, expect.objectContaining({ priority: "low" }));
+    });
+
+    it("still denies a peer agent (no manager chain) PATCH on another agent's todo issue", async () => {
+      mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo", assigneeAgentId: ownerAgentId }));
+      peerOnlyDecide();
+
+      const res = await request(await createApp(peerActor()))
+        .patch(`/api/issues/${issueId}`)
+        .send({ priority: "low" });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.error).toBe("Issue is outside this actor's authorization boundary");
+      expect(mockIssueService.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe("task watchdog scope grants", () => {
     const watchdogRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab";
     const watchdogReportIssueId = "cccccccc-cccc-4ccc-8ccc-cccccccccccd";
