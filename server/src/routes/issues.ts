@@ -1765,6 +1765,10 @@ export function issueRoutes(
       res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
       return false;
     }
+    if (issue.assigneeUserId !== null) {
+      res.status(403).json({ error: "Cannot mutate a user-assigned issue as an agent" });
+      return false;
+    }
     if (issue.assigneeAgentId === null) {
       return true;
     }
