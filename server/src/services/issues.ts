@@ -1987,6 +1987,7 @@ const issueListSelect = {
   originId: issues.originId,
   originRunId: issues.originRunId,
   originFingerprint: issues.originFingerprint,
+  idempotencyKey: issues.idempotencyKey,
   requestDepth: issues.requestDepth,
   billingCode: issues.billingCode,
   assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
@@ -5348,6 +5349,21 @@ export function issueService(db: Db) {
                   eq(issueRelations.type, "blocks"),
                 ),
               );
+          }
+        }
+        // Auto-close execution workspace when last non-terminal issue reaches terminal status
+        if (
+          (issueData.status === "done" || issueData.status === "cancelled") &&
+          existing.status !== issueData.status &&
+          updated.executionWorkspaceId
+        ) {
+          const others = await tx
+            .select({ id: issues.id })
+            .from(issues)
+            .where(and(eq(issues.executionWorkspaceId, updated.executionWorkspaceId), ne(issues.id, updated.id), notInArray(issues.status, ["done", "cancelled"])));
+          if (others.length === 0) {
+            const now = new Date();
+            await tx.update(executionWorkspaces).set({ status: "idle", closedAt: now, cleanupEligibleAt: now, cleanupReason: "issue_terminal", updatedAt: now }).where(and(eq(executionWorkspaces.id, updated.executionWorkspaceId), isNull(executionWorkspaces.closedAt), ne(executionWorkspaces.mode, "shared_workspace")));
           }
         }
         return enriched;
