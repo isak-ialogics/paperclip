@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   summarizeHeartbeatRunResultJson,
   buildHeartbeatRunIssueComment,
+  buildHeartbeatRunFailureComment,
   mergeHeartbeatRunResultJson,
 } from "../services/heartbeat-run-summary.js";
 
@@ -94,5 +95,34 @@ describe("mergeHeartbeatRunResultJson", () => {
       summary: "adapter result",
       stdout: "raw stdout",
     });
+  });
+});
+
+describe("buildHeartbeatRunFailureComment", () => {
+  it("formats a failed run with error code and message", () => {
+    const comment = buildHeartbeatRunFailureComment({
+      outcome: "failed",
+      errorCode: "adapter_failed",
+      error: "Connection refused to upstream API",
+    });
+    expect(comment).toBe("Run failed (adapter_failed).\n\n> Connection refused to upstream API");
+  });
+
+  it("formats a timed_out run without error details", () => {
+    const comment = buildHeartbeatRunFailureComment({
+      outcome: "timed_out",
+      errorCode: null,
+      error: null,
+    });
+    expect(comment).toBe("Timed out.");
+  });
+
+  it("formats a failed run with error code but no message", () => {
+    const comment = buildHeartbeatRunFailureComment({
+      outcome: "failed",
+      errorCode: "timeout",
+      error: null,
+    });
+    expect(comment).toBe("Run failed (timeout).");
   });
 });

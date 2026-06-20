@@ -75,6 +75,7 @@ import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import {
   buildHeartbeatRunIssueComment,
+  buildHeartbeatRunFailureComment,
   HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS,
   HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
   HEARTBEAT_RUN_SAFE_RESULT_JSON_MAX_BYTES,
@@ -9066,11 +9067,20 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const livenessRun = finalizedRun;
         await refreshContinuationSummaryForRun(livenessRun, agent);
         const skipRunIssueComment = parseObject(livenessRun.contextSnapshot).skipIssueComment === true;
-        if (issueId && outcome === "succeeded" && !skipRunIssueComment) {
+        if (issueId && !skipRunIssueComment) {
           try {
             const existingRunComment = await findRunIssueComment(livenessRun.id, livenessRun.companyId, issueId);
             if (!existingRunComment) {
-              const issueComment = buildHeartbeatRunIssueComment(persistedResultJson);
+              let issueComment: string | null = null;
+              if (outcome === "succeeded") {
+                issueComment = buildHeartbeatRunIssueComment(persistedResultJson);
+              } else if (outcome === "failed" || outcome === "timed_out") {
+                issueComment = buildHeartbeatRunFailureComment({
+                  outcome: outcome as "failed" | "timed_out",
+                  errorCode: runErrorCode,
+                  error: runErrorMessage,
+                });
+              }
               if (issueComment) {
                 await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: livenessRun.id });
               }

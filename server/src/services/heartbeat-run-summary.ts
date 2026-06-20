@@ -106,3 +106,14 @@ export function buildHeartbeatRunIssueComment(
     ?? null
   );
 }
+
+export function buildHeartbeatRunFailureComment(opts: {
+  outcome: "failed" | "timed_out";
+  errorCode: string | null;
+  error: string | null;
+}): string {
+  const label = opts.outcome === "timed_out" ? "Timed out" : "Run failed";
+  const code = opts.errorCode ? ` (${opts.errorCode})` : "";
+  const detail = opts.error ? `\n\n> ${opts.error}` : "";
+  return `${label}${code}.${detail}`;
+}
