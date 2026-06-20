@@ -469,7 +469,7 @@ export function Layout() {
       <div
       className={cn(
         "bg-background text-foreground pt-[env(safe-area-inset-top)]",
-        isMobile ? "min-h-dvh" : "flex h-dvh flex-col overflow-clip",
+        isMobile ? "min-h-dvh overflow-x-hidden" : "flex h-dvh flex-col overflow-clip",
       )}
       >
       <a
