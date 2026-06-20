@@ -4267,14 +4267,14 @@ export function issueRoutes(
     await assertCanManageIssueMonitor(access, req, companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
 
     // Idempotency: if the same idempotencyKey is sent twice, return the existing issue.
-    if (rawCreateBody.idempotencyKey) {
+    if (createBody.idempotencyKey) {
       const [existing] = await db
         .select({ id: issueRows.id })
         .from(issueRows)
         .where(
           and(
             eq(issueRows.companyId, companyId),
-            eq(issueRows.idempotencyKey, rawCreateBody.idempotencyKey),
+            eq(issueRows.idempotencyKey, createBody.idempotencyKey),
             notInArray(issueRows.status, ["cancelled"]),
           ),
         )
