@@ -4465,7 +4465,20 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const issueProjectId = issueProjectRef?.projectId ?? null;
     const preferredProjectWorkspaceId =
       issueProjectRef?.projectWorkspaceId ?? contextProjectWorkspaceId ?? null;
-    const resolvedProjectId = issueProjectId ?? contextProjectId;
+    let resolvedProjectId = issueProjectId ?? contextProjectId;
+    if (!resolvedProjectId && preferredProjectWorkspaceId) {
+      const wsRow = await db
+        .select({ projectId: projectWorkspaces.projectId })
+        .from(projectWorkspaces)
+        .where(
+          and(
+            eq(projectWorkspaces.id, preferredProjectWorkspaceId),
+            eq(projectWorkspaces.companyId, agent.companyId),
+          ),
+        )
+        .then((rows: Array<{ projectId: string | null }>) => rows[0] ?? null);
+      if (wsRow?.projectId) resolvedProjectId = wsRow.projectId;
+    }
     const useProjectWorkspace = opts?.useProjectWorkspace !== false;
     const workspaceProjectId = useProjectWorkspace ? resolvedProjectId : null;
 
