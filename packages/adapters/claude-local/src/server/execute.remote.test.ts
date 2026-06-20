@@ -266,6 +266,47 @@ describe("claude remote execution", () => {
     expect(call?.[2]).not.toContain("--resume");
   });
 
+  it("classifies exit-code-0 rate-limit stderr as claude_transient_upstream", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exit0-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+
+    const result = await execute({
+      runId: "run-exit0-rate-limit",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "claude",
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+          source: "project_primary",
+        },
+      },
+      onLog: async () => {},
+    });
+
+    // Exit-code 0 with rate-limit stderr should be classified as transient upstream,
+    // not as adapter_failed. This is the fix for GH#8216.
+    expect(result.errorCode).toBe("claude_transient_upstream");
+    expect(result.errorFamily).toBe("transient_upstream");
+    expect(result.retryNotBefore).toBeDefined();
+    expect(result.retryNotBefore).not.toBeNull();
+  });
+
   it("resumes saved Claude sessions for remote SSH execution when the remote identity matches", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-resume-match-"));
     cleanupDirs.push(rootDir);
