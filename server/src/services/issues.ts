@@ -5350,6 +5350,42 @@ export function issueService(db: Db) {
               );
           }
         }
+        // Auto-close execution workspace when linked issue reaches terminal state
+        if (
+          (issueData.status === "done" || issueData.status === "cancelled") &&
+          existing.status !== issueData.status &&
+          updated.executionWorkspaceId
+        ) {
+          // Only close if no other non-terminal issue still references the same workspace
+          const otherActiveIssues = await tx
+            .select({ id: issues.id })
+            .from(issues)
+            .where(
+              and(
+                eq(issues.executionWorkspaceId, updated.executionWorkspaceId),
+                ne(issues.id, updated.id),
+                notInArray(issues.status, ["done", "cancelled"]),
+              ),
+            );
+          if (otherActiveIssues.length === 0) {
+            const now = new Date();
+            await tx
+              .update(executionWorkspaces)
+              .set({
+                status: "idle",
+                closedAt: now,
+                cleanupEligibleAt: now,
+                cleanupReason: "issue_terminal",
+              })
+              .where(
+                and(
+                  eq(executionWorkspaces.id, updated.executionWorkspaceId),
+                  isNull(executionWorkspaces.closedAt),
+                  ne(executionWorkspaces.mode, "shared_workspace"),
+                ),
+              );
+          }
+        }
         return enriched;
       };
 
