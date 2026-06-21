@@ -398,22 +398,45 @@ export function EnvVarEditor({
             issues.push({ key: row.key.trim() || secret.name, reason: secret.status });
           }
         }
-        if (!issues.length) return null;
+        const reservedKeys = rows
+          .filter((r) => r.key.trim().startsWith("PAPERCLIP_") && r.key.trim())
+          .map((r) => r.key.trim());
+        const hasIssues = issues.length > 0 || reservedKeys.length > 0;
+        if (!hasIssues) return null;
         return (
-          <p className="text-[11px] text-amber-700 dark:text-amber-400 inline-flex items-start gap-1">
-            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
-            <span>
-              {issues.length} secret binding{issues.length === 1 ? "" : "s"} need attention:{" "}
-              {issues.map((issue, idx) => (
-                <span key={idx} className="font-mono">
-                  {issue.key}
-                  <span className="text-muted-foreground"> ({issue.reason})</span>
-                  {idx < issues.length - 1 ? ", " : ""}
+          <>
+            {issues.length > 0 && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 inline-flex items-start gap-1">
+                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>
+                  {issues.length} secret binding{issues.length === 1 ? "" : "s"} need attention:{" "}
+                  {issues.map((issue, idx) => (
+                    <span key={idx} className="font-mono">
+                      {issue.key}
+                      <span className="text-muted-foreground"> ({issue.reason})</span>
+                      {idx < issues.length - 1 ? ", " : ""}
+                    </span>
+                  ))}
+                  . Runs will fail until you remap or re-enable.
                 </span>
-              ))}
-              . Runs will fail until you remap or re-enable.
-            </span>
-          </p>
+              </p>
+            )}
+            {reservedKeys.length > 0 && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 inline-flex items-start gap-1">
+                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>
+                  The following env vars use reserved PAPERCLIP_* keys and will be ignored at runtime:{" "}
+                  {reservedKeys.map((key, idx) => (
+                    <span key={idx} className="font-mono">
+                      {key}
+                      {idx < reservedKeys.length - 1 ? ", " : ""}
+                    </span>
+                  ))}
+                  . Remove or rename them.
+                </span>
+              </p>
+            )}
+          </>
         );
       })()}
       <p className="text-[11px] text-muted-foreground/60">
