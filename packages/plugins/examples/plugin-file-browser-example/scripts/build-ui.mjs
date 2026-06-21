@@ -19,6 +19,14 @@ await esbuild.build({
     "react-dom",
     "react/jsx-runtime",
     "@paperclipai/plugin-sdk/ui",
+    // CodeMirror packages — must share host instance (GH#8201)
+    "@codemirror/state",
+    "@codemirror/view",
+    "@codemirror/language",
+    "@codemirror/commands",
+    "@codemirror/lang-javascript",
+    "@lezer/highlight",
+    "codemirror",
   ],
   logLevel: "info",
 });
