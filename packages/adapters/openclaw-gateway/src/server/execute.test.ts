@@ -50,3 +50,9 @@ describe("resolveSessionKey", () => {
     ).toBe("agent:meridian:paperclip");
   });
 });
+
+describe("PROTOCOL_VERSION", () => {
+  it("negotiates gateway protocol v4 or later", () => {
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(4);
+  });
+});
