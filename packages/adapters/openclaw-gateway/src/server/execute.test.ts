@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { resolveSessionKey } from "./execute.js";
+import { PROTOCOL_VERSION } from "./execute.js";
+
+describe("PROTOCOL_VERSION", () => {
+  it("must be at least 4 for OpenClaw 2026.6.x compatibility", () => {
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(4);
+  });
+});
 
 describe("resolveSessionKey", () => {
   it("prefixes run-scoped session keys with the configured agent", () => {
