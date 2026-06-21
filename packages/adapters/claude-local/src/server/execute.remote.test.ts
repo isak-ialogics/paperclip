@@ -266,6 +266,66 @@ describe("claude remote execution", () => {
     expect(call?.[2]).not.toContain("--resume");
   });
 
+  it("classifies exit-code 0 rate-limit stderr as claude_transient_upstream", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-transient-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+
+    // Override the mock to return exitCode 0 with rate-limit stderr
+    vi.mocked(runChildProcess).mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "HTTP 429: Too Many Requests - rate limit exceeded",
+      pid: 123,
+      startedAt: new Date().toISOString(),
+    });
+
+    const result = await execute({
+      runId: "run-transient-0",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "claude",
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+          source: "project_primary",
+        },
+      },
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "PRIVATE KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    expect(result?.errorCode).toBe("claude_transient_upstream");
+    expect(result?.errorFamily).toBe("transient_upstream");
+  });
+
   it("resumes saved Claude sessions for remote SSH execution when the remote identity matches", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-resume-match-"));
     cleanupDirs.push(rootDir);
