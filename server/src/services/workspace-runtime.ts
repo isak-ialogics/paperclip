@@ -119,6 +119,7 @@ const runtimeServicesById = new Map<string, RuntimeServiceRecord>();
 const runtimeServicesByReuseKey = new Map<string, string>();
 const runtimeServiceLeasesByRun = new Map<string, string[]>();
 const DEFAULT_EXECUTE_PROCESS_OUTPUT_BYTES = 256 * 1024;
+const WORKSPACE_GIT_EXEC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes, mirrors clone timeout
 
 type ProcessOutputCapture = {
   text: string;
@@ -470,6 +471,7 @@ async function executeProcess(input: {
   env?: NodeJS.ProcessEnv;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
+  timeoutMs?: number;
 }): Promise<{
   stdout: string;
   stderr: string;
@@ -488,6 +490,7 @@ async function executeProcess(input: {
       cwd: input.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: input.env ?? process.env,
+      signal: AbortSignal.timeout(input.timeoutMs ?? WORKSPACE_GIT_EXEC_TIMEOUT_MS),
     });
     const stdout = createProcessOutputCapture(input.maxStdoutBytes ?? DEFAULT_EXECUTE_PROCESS_OUTPUT_BYTES);
     const stderr = createProcessOutputCapture(input.maxStderrBytes ?? DEFAULT_EXECUTE_PROCESS_OUTPUT_BYTES);
