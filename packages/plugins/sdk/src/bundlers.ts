@@ -65,6 +65,12 @@ export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {})
     "react",
     "react-dom",
     "react/jsx-runtime",
+    // CodeMirror packages — must share host instance to avoid instanceof crashes (GH#8201)
+    "@codemirror/state",
+    "@codemirror/view",
+    "@codemirror/language",
+    "@codemirror/commands",
+    "codemirror",
   ];
 
   const outdir = input.outdir ?? "dist";
