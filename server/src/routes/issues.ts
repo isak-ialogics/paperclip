@@ -4735,7 +4735,7 @@ export function issueRoutes(
       ? await recoveryActionsSvc.getActiveForIssue(existing.companyId, existing.id)
       : null;
     if (isAgentBlockedByUserAssignment && !userAssignedRecoveryAction) {
-      res.status(403).json({ error: "Agents cannot mutate or checkout user-assigned issues" });
+      res.status(403).json({ error: "Cannot mutate a user-assigned issue as an agent" });
       return;
     }
     assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
@@ -5794,7 +5794,7 @@ export function issueRoutes(
     }
     assertCompanyAccess(req, issue.companyId);
     if (req.actor.type === "agent" && !canAgentMutateOrCheckoutIssue(issue)) {
-      res.status(403).json({ error: "Agents cannot mutate or checkout user-assigned issues" });
+      res.status(403).json({ error: "Cannot mutate a user-assigned issue as an agent" });
       return;
     }
     if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;

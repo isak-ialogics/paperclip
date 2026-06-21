@@ -119,7 +119,7 @@ describe("issueRoutes user-assignee checkout boundary", () => {
       .send({ status: "blocked" });
 
     expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: "Agents cannot mutate or checkout user-assigned issues" });
+    expect(res.body).toEqual({ error: "Cannot mutate a user-assigned issue as an agent" });
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
@@ -131,7 +131,7 @@ describe("issueRoutes user-assignee checkout boundary", () => {
       .send({ agentId: "11111111-1111-4111-8111-111111111111", expectedStatuses: ["todo"] });
 
     expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: "Agents cannot mutate or checkout user-assigned issues" });
+    expect(res.body).toEqual({ error: "Cannot mutate a user-assigned issue as an agent" });
     expect(mockIssueService.checkout).not.toHaveBeenCalled();
   });
 
