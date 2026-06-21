@@ -266,6 +266,56 @@ describe("claude remote execution", () => {
     expect(call?.[2]).not.toContain("--resume");
   });
 
+  it("classifies exit-code-0 rate-limit stderr as claude_transient_upstream", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-transient-exit0-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+
+    // Override the default mock: exit code 0 with non-JSON stderr matching transient upstream
+    vi.mocked(runChildProcess).mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "HTTP 429: Too Many Requests — rate limit exceeded",
+      pid: 456,
+      startedAt: new Date().toISOString(),
+    } as never);
+
+    const result = await execute({
+      runId: "run-transient-exit0",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Claude Coder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "claude",
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+          source: "project_primary",
+        },
+      },
+      onLog: async () => {},
+    });
+
+    expect(runChildProcess).toHaveBeenCalledTimes(1);
+    expect(result.errorCode).toBe("claude_transient_upstream");
+    expect(result.errorFamily).toBe("transient_upstream");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("resumes saved Claude sessions for remote SSH execution when the remote identity matches", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-resume-match-"));
     cleanupDirs.push(rootDir);

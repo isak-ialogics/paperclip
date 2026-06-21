@@ -839,7 +839,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       const fallbackErrorMessage = parseFallbackErrorMessage(proc);
       const transientUpstream =
         !loginMeta.requiresLogin &&
-        (proc.exitCode ?? 0) !== 0 &&
         isClaudeTransientUpstreamError({
           parsed: null,
           stdout: proc.stdout,
