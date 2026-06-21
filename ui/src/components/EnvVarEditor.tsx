@@ -105,10 +105,15 @@ export function EnvVarEditor({
    */
   recentlyUsedSecrets?: CompanySecret[];
 }) {
+  const RESERVED_PREFIX = "PAPERCLIP_";
   const [rows, setRows] = useState<Row[]>(() => toRows(value));
   const [sealError, setSealError] = useState<string | null>(null);
   const valueRef = useRef(value);
   const emittingRef = useRef(false);
+
+  function hasReservedKey(key: string): boolean {
+    return key.startsWith(RESERVED_PREFIX);
+  }
 
   useEffect(() => {
     if (emittingRef.current) {
@@ -127,6 +132,7 @@ export function EnvVarEditor({
     for (const row of nextRows) {
       const key = row.key.trim();
       if (!key) continue;
+      if (hasReservedKey(key)) continue;
       if (row.source === "secret") {
         if (row.secretId) {
           rec[key] = { type: "secret_ref", secretId: row.secretId, version: row.version };
@@ -227,14 +233,21 @@ export function EnvVarEditor({
           !row.key &&
           !row.plainValue &&
           !row.secretId;
+        const isReserved = row.key && hasReservedKey(row.key.trim());
         return (
-          <div key={index} className="flex items-center gap-1.5">
+          <div key={index} className={cn("flex items-center gap-1.5", isReserved && "ring-1 ring-destructive/40 rounded")}>
             <input
-              className={cn(inputClass, "flex-[2]")}
+              className={cn(inputClass, "flex-[2]", isReserved && "border-destructive text-destructive")}
               placeholder="KEY"
               value={row.key}
               onChange={(event) => updateRow(index, { key: event.target.value })}
+              title={isReserved ? "PAPERCLIP_ prefixed keys are reserved for Paperclip" : undefined}
             />
+            {isReserved && (
+              <span className="shrink-0 text-[10px] font-medium text-destructive bg-destructive/10 px-1.5 py-0.5 rounded">
+                RESERVED
+              </span>
+            )}
             <Select
               value={row.source}
               onValueChange={(next) =>
@@ -418,7 +431,7 @@ export function EnvVarEditor({
       })()}
       <p className="text-[11px] text-muted-foreground/60">
         Set KEY to the env var name the process expects, for example GH_TOKEN. Choose Secret to resolve a stored
-        value at run start. PAPERCLIP_* variables are injected automatically.
+        value at run start. Keys starting with PAPERCLIP_ are reserved for Paperclip and will be rejected.
       </p>
     </div>
   );

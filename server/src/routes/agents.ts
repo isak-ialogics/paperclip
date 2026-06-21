@@ -1376,6 +1376,23 @@ export function agentRoutes(
     );
   }
 
+  const PAPERCLIP_ENV_PREFIX = "PAPERCLIP_";
+
+  function assertNoReservedEnvKeys(
+    adapterConfig: Record<string, unknown>,
+    path = "adapterConfig",
+  ) {
+    const env = adapterConfig.env;
+    if (env == null || typeof env !== "object") return;
+    const keys = Object.keys(env);
+    const reserved = keys.filter((k) => k.startsWith(PAPERCLIP_ENV_PREFIX));
+    if (reserved.length > 0) {
+      throw unprocessable(
+        `The following ${path} env keys are reserved for Paperclip and cannot be set by agents: ${reserved.join(", ")}`,
+      );
+    }
+  }
+
   function summarizeAgentUpdateDetails(patch: Record<string, unknown>) {
     const changedTopLevelKeys = Object.keys(patch).sort();
     const details: Record<string, unknown> = { changedTopLevelKeys };
@@ -2418,6 +2435,7 @@ export function agentRoutes(
       rawCreateAdapterConfig,
     );
     assertNoAgentAdapterConfigMutation(req, rawCreateAdapterConfig);
+    assertNoReservedEnvKeys(rawCreateAdapterConfig);
     assertNoAgentRuntimeConfigAdapterConfigMutation(req, createInput.runtimeConfig);
     const agentId = randomUUID();
     const requestedAdapterConfig = applyCodexLocalIsolationGuard(
@@ -2833,6 +2851,7 @@ export function agentRoutes(
         return;
       }
       assertNoAgentAdapterConfigMutation(req, adapterConfig);
+      assertNoReservedEnvKeys(adapterConfig);
       const changingInstructionsConfig = adapterConfigTouchesInstructionsConfig(adapterConfig);
       if (changingInstructionsConfig) {
         await assertCanManageInstructionsPath(req, existing);
