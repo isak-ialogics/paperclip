@@ -464,6 +464,11 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   }
 
   async function isAgentInvokable(agent: typeof agents.$inferSelect | null | undefined) {
+    if (!agent || ["paused", "terminated", "pending_approval"].includes(agent.status)) return false;
+    const hb = (agent.runtimeConfig as Record<string, unknown> | undefined)?.heartbeat as
+      | Record<string, unknown>
+      | undefined;
+    if (hb !== undefined && !hb?.enabled && !hb?.wakeOnDemand) return false;
     return (await evaluateAgentInvokabilityFromDb(db, agent)).invokable;
   }
 
