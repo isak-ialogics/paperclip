@@ -3743,10 +3743,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           }
         }
         hasConfiguredProjectCwd = true;
-        const projectCwdExists = await fs
+        let projectCwdExists = await fs
           .stat(projectCwd)
           .then((stats) => stats.isDirectory())
           .catch(() => false);
+        if (!projectCwdExists && readNonEmptyString(workspace.sourceType) === "local_path") {
+          await fs.mkdir(projectCwd, { recursive: true });
+          await execFile("git", ["init"], { cwd: projectCwd });
+          projectCwdExists = true;
+        }
         if (projectCwdExists) {
           return {
             cwd: projectCwd,
