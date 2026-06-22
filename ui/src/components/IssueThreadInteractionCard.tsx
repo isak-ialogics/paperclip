@@ -1806,6 +1806,9 @@ export function IssueThreadInteractionCard({
                   : "Wakes assignee"}
               </span>
             ) : null}
+            <span className="font-mono text-[10px] text-muted-foreground/60 select-all">
+              {interaction.id.slice(0, 8)}
+            </span>
           </div>
 
           <div className="mt-3 text-lg font-bold text-foreground">
